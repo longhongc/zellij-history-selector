@@ -1,0 +1,298 @@
+use std::collections::{BTreeMap, HashSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+
+use crate::model::{
+    CommandConfig, FileLinesConfig, HistoryEntry, IPythonConfig, ProviderConfig, ProviderKind,
+    SqliteQueryConfig, SplitMode,
+};
+
+pub const SQLITE_HELPER: &str = r#"
+import json
+import sqlite3
+import sys
+
+path = sys.argv[1]
+query = sys.argv[2]
+uri = "file:{}?mode=ro".format(path)
+conn = sqlite3.connect(uri, uri=True)
+cursor = conn.execute(query)
+for row in cursor:
+    values = []
+    for value in row:
+        if value is None:
+            values.append(None)
+        else:
+            values.append(str(value))
+    print(json.dumps({"values": values}, ensure_ascii=False))
+"#;
+
+#[derive(Clone, Debug)]
+pub struct CommandInvocation {
+    pub argv: Vec<String>,
+    pub cwd: Option<PathBuf>,
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SqliteRow {
+    values: Vec<Option<String>>,
+}
+
+pub fn provider_requires_full_hd(config: &ProviderConfig) -> bool {
+    matches!(
+        config.kind,
+        ProviderKind::FileLines(_) | ProviderKind::SqliteQuery(_) | ProviderKind::IPython(_)
+    )
+}
+
+pub fn provider_requires_run_commands(config: &ProviderConfig) -> bool {
+    matches!(
+        config.kind,
+        ProviderKind::Command(_) | ProviderKind::SqliteQuery(_) | ProviderKind::IPython(_)
+    )
+}
+
+pub fn load_file_provider(config: &ProviderConfig) -> Result<Vec<HistoryEntry>, String> {
+    let file_config = match &config.kind {
+        ProviderKind::FileLines(file_config) => file_config,
+        _ => return Err("Internal error: expected file_lines provider".to_owned()),
+    };
+
+    let path = config_path_to_wasi(&file_config.path)?;
+    let contents =
+        fs::read_to_string(&path).map_err(|error| format!("Failed to read {}: {error}", file_config.path))?;
+    let mut lines = contents
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    if file_config.reverse {
+        lines.reverse();
+    }
+
+    let entries = lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, text)| HistoryEntry {
+            id: format!("{}:{index}", config.name),
+            provider_name: config.name.clone(),
+            preview: multiline_preview(&text),
+            text,
+            timestamp: None,
+            score_hint: Some((file_config.limit.saturating_sub(index)) as i64),
+            metadata: BTreeMap::from([("path".to_owned(), file_config.path.clone())]),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(finalize_entries(entries, file_config.dedupe, file_config.limit))
+}
+
+pub fn build_command_invocation(config: &ProviderConfig) -> Result<CommandInvocation, String> {
+    match &config.kind {
+        ProviderKind::Command(command_config) => Ok(CommandInvocation {
+            argv: std::iter::once(command_config.command.clone())
+                .chain(command_config.args.iter().cloned())
+                .collect(),
+            cwd: command_config
+                .cwd
+                .as_ref()
+                .map(|cwd| expand_host_path(cwd))
+                .transpose()?,
+            env: command_config.env.clone(),
+        }),
+        ProviderKind::SqliteQuery(sqlite_config) => build_sqlite_invocation(sqlite_config),
+        ProviderKind::IPython(ipython_config) => {
+            let sqlite_config = ipython_to_sqlite(ipython_config);
+            build_sqlite_invocation(&sqlite_config)
+        },
+        ProviderKind::FileLines(_) => Err("Internal error: file_lines is not a command provider".to_owned()),
+    }
+}
+
+pub fn parse_command_output(
+    config: &ProviderConfig,
+    exit_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<Vec<HistoryEntry>, String> {
+    if exit_code != Some(0) {
+        let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+        return Err(if stderr.is_empty() {
+            format!("Provider '{}' failed with exit code {:?}", config.name, exit_code)
+        } else {
+            format!("Provider '{}' failed: {}", config.name, stderr)
+        });
+    }
+
+    match &config.kind {
+        ProviderKind::Command(command_config) => parse_line_output(config, command_config, stdout),
+        ProviderKind::SqliteQuery(sqlite_config) => parse_sqlite_output(config, sqlite_config, stdout),
+        ProviderKind::IPython(ipython_config) => {
+            let sqlite_config = ipython_to_sqlite(ipython_config);
+            parse_sqlite_output(config, &sqlite_config, stdout)
+        },
+        ProviderKind::FileLines(_) => Err("Internal error: file_lines does not use command output".to_owned()),
+    }
+}
+
+fn parse_line_output(
+    config: &ProviderConfig,
+    command_config: &CommandConfig,
+    stdout: &[u8],
+) -> Result<Vec<HistoryEntry>, String> {
+    let output = String::from_utf8(stdout.to_vec())
+        .map_err(|error| format!("Provider '{}' returned invalid UTF-8: {error}", config.name))?;
+    let entries = match command_config.split_mode {
+        SplitMode::Lines => output
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.trim().is_empty())
+            .enumerate()
+            .map(|(index, text)| HistoryEntry {
+                id: format!("{}:{index}", config.name),
+                provider_name: config.name.clone(),
+                text: text.to_owned(),
+                preview: None,
+                timestamp: None,
+                score_hint: Some((command_config.limit.saturating_sub(index)) as i64),
+                metadata: BTreeMap::new(),
+            })
+            .collect::<Vec<_>>(),
+    };
+
+    Ok(finalize_entries(entries, command_config.dedupe, command_config.limit))
+}
+
+fn build_sqlite_invocation(sqlite_config: &SqliteQueryConfig) -> Result<CommandInvocation, String> {
+    let path = expand_host_path(&sqlite_config.path)?;
+    Ok(CommandInvocation {
+        argv: vec![
+            "python3".to_owned(),
+            "-c".to_owned(),
+            SQLITE_HELPER.to_owned(),
+            path.to_string_lossy().to_string(),
+            sqlite_config.query.clone(),
+        ],
+        cwd: None,
+        env: BTreeMap::new(),
+    })
+}
+
+fn ipython_to_sqlite(config: &IPythonConfig) -> SqliteQueryConfig {
+    let query = config.query_override.clone().unwrap_or_else(|| {
+        format!(
+            "SELECT COALESCE(source_raw, source), printf('%d:%d', session, line), session \
+             FROM history \
+             WHERE COALESCE(source_raw, source) IS NOT NULL \
+             ORDER BY session DESC, line DESC \
+             LIMIT {}",
+            config.limit
+        )
+    });
+    SqliteQueryConfig {
+        path: config.path.clone(),
+        query,
+        text_column: 0,
+        preview_column: None,
+        timestamp_column: Some(1),
+        limit: config.limit,
+        dedupe: config.dedupe,
+    }
+}
+
+fn parse_sqlite_output(
+    config: &ProviderConfig,
+    sqlite_config: &SqliteQueryConfig,
+    stdout: &[u8],
+) -> Result<Vec<HistoryEntry>, String> {
+    let output = String::from_utf8(stdout.to_vec())
+        .map_err(|error| format!("Provider '{}' returned invalid UTF-8: {error}", config.name))?;
+    let mut entries = Vec::new();
+
+    for (index, line) in output.lines().filter(|line| !line.trim().is_empty()).enumerate() {
+        let row: SqliteRow = serde_json::from_str(line).map_err(|error| {
+            format!("Provider '{}' returned invalid SQLite JSON rows: {error}", config.name)
+        })?;
+        let text = get_column(&row.values, sqlite_config.text_column)
+            .ok_or_else(|| format!("Provider '{}' missing text column {}", config.name, sqlite_config.text_column))?;
+        let preview = sqlite_config
+            .preview_column
+            .and_then(|column| get_column(&row.values, column).map(str::to_owned))
+            .or_else(|| multiline_preview(text));
+        let timestamp = sqlite_config
+            .timestamp_column
+            .and_then(|column| get_column(&row.values, column).map(str::to_owned));
+
+        entries.push(HistoryEntry {
+            id: format!("{}:{index}", config.name),
+            provider_name: config.name.clone(),
+            text: text.to_owned(),
+            preview,
+            timestamp,
+            score_hint: Some((sqlite_config.limit.saturating_sub(index)) as i64),
+            metadata: BTreeMap::from([("path".to_owned(), sqlite_config.path.clone())]),
+        });
+    }
+
+    Ok(finalize_entries(entries, sqlite_config.dedupe, sqlite_config.limit))
+}
+
+fn get_column(values: &[Option<String>], index: usize) -> Option<&str> {
+    values.get(index).and_then(|value| value.as_deref())
+}
+
+fn multiline_preview(text: &str) -> Option<String> {
+    text.contains('\n').then(|| text.to_owned())
+}
+
+fn finalize_entries(mut entries: Vec<HistoryEntry>, dedupe: bool, limit: usize) -> Vec<HistoryEntry> {
+    if dedupe {
+        let mut seen = HashSet::new();
+        entries.retain(|entry| seen.insert(entry.text.clone()));
+    }
+    if entries.len() > limit {
+        entries.truncate(limit);
+    }
+    entries
+}
+
+fn config_path_to_wasi(path: &str) -> Result<PathBuf, String> {
+    let host_path = expand_host_path(path)?;
+    if !host_path.is_absolute() {
+        return Err(format!("Expected absolute host path after expansion: {path}"));
+    }
+    let relative = host_path
+        .strip_prefix(Path::new("/"))
+        .map_err(|_| format!("Failed to translate host path into /host mount: {path}"))?;
+    Ok(Path::new("/host").join(relative))
+}
+
+fn expand_host_path(path: &str) -> Result<PathBuf, String> {
+    if let Some(rest) = path.strip_prefix("~/") {
+        let home = env::var("HOME").map_err(|_| "HOME is not set".to_owned())?;
+        return Ok(Path::new(&home).join(rest));
+    }
+    if path == "~" {
+        let home = env::var("HOME").map_err(|_| "HOME is not set".to_owned())?;
+        return Ok(PathBuf::from(home));
+    }
+
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        return Ok(candidate);
+    }
+
+    let base = env::var("PWD")
+        .map(PathBuf::from)
+        .or_else(|_| env::current_dir().map_err(|error| error.to_string()))?;
+    Ok(base.join(candidate))
+}
+
+#[allow(dead_code)]
+fn _assert_send_sync_usage(_config: &FileLinesConfig) {}
