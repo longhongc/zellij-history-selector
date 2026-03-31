@@ -1,6 +1,16 @@
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::model::{MatchResult, ProviderLoadState, ProviderState};
+use crate::model::{MatchResult, ProviderKind, ProviderLoadState, ProviderState};
+use zellij_tile::ui_components::{serialize_ribbon_line_with_coordinates, Text};
+
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_ITALIC: &str = "\x1b[3m";
+const ANSI_BLUE: &str = "\x1b[34m";
+const ANSI_GREEN: &str = "\x1b[32m";
+const ANSI_CYAN: &str = "\x1b[36m";
+const ANSI_YELLOW: &str = "\x1b[33m";
+const ANSI_BRIGHT_BLACK: &str = "\x1b[90m";
 
 pub fn render_screen(
     rows: usize,
@@ -16,6 +26,7 @@ pub fn render_screen(
 ) -> String {
     let width = cols.max(20);
     let height = rows.max(8);
+    let content_height = height.saturating_sub(1).max(1);
     let provider = providers.get(current_provider);
     let title = "zellij-history-selector";
     let provider_name = provider.map(|provider| provider.config.name.as_str()).unwrap_or("none");
@@ -23,18 +34,17 @@ pub fn render_screen(
         .map(|provider| format_provider_state(&provider.load_state))
         .unwrap_or_else(|| "missing".to_owned());
 
-    let fixed_rows = 6usize;
-    let preview_height = preview_lines.min(height.saturating_sub(fixed_rows)).max(3);
-    let list_height = height.saturating_sub(fixed_rows + preview_height);
+    let fixed_rows = 4usize;
+    let preview_height = preview_lines
+        .min(content_height.saturating_sub(fixed_rows))
+        .min(content_height / 3)
+        .max(3);
+    let list_height = content_height.saturating_sub(fixed_rows + preview_height);
 
-    let mut lines = Vec::with_capacity(height);
+    let mut lines = Vec::with_capacity(content_height);
     lines.push(pad_right(title, width));
     lines.push(pad_right(
         &format!("Provider: {} [{}]  Target: {}", provider_name, provider_state, target_label),
-        width,
-    ));
-    lines.push(pad_right(
-        &format!("Status: {}", status.unwrap_or("ready")),
         width,
     ));
     lines.push(pad_right(&format!("Search: {}", query), width));
@@ -42,8 +52,7 @@ pub fn render_screen(
     let rendered_matches = render_match_lines(provider, matches, selected_match, width, list_height);
     lines.extend(rendered_matches);
 
-    lines.push(pad_right("", width));
-    lines.push(pad_right("Preview:", width));
+    lines.push(pad_right(&section_label("Preview", width), width));
     lines.extend(render_preview_lines(
         provider,
         matches,
@@ -52,21 +61,20 @@ pub fn render_screen(
         preview_height.saturating_sub(1),
     ));
 
-    if lines.len() < height {
-        let footer =
-            "Enter select  Esc cancel  Ctrl+C cancel  Up/Down move  Tab switch provider  Ctrl+R reload";
-        while lines.len() + 1 < height {
-            lines.push(pad_right("", width));
-        }
-        lines.push(pad_right(footer, width));
-    }
-
-    lines.truncate(height);
-    while lines.len() < height {
+    lines.truncate(content_height);
+    while lines.len() < content_height {
         lines.push(" ".repeat(width));
     }
 
-    lines.join("\n")
+    let mut rendered = lines.join("\n");
+    rendered.push_str(&serialize_ribbon_line_with_coordinates(
+        footer_ribbons(status),
+        0,
+        rows.saturating_sub(1),
+        Some(cols),
+        Some(1),
+    ));
+    rendered
 }
 
 fn render_match_lines(
@@ -89,15 +97,18 @@ fn render_match_lines(
             if matches.is_empty() {
                 lines.push(pad_right("No matches", width));
             } else {
-                let start = selected_match.saturating_sub(list_height.saturating_sub(1));
+                let start = selected_match.saturating_sub(list_height / 2);
                 for (offset, match_result) in matches.iter().skip(start).take(list_height).enumerate() {
                     let selected = start + offset == selected_match;
-                    let prefix = if selected { ">" } else { " " };
                     let text = entries
                         .get(match_result.entry_index)
                         .map(|entry| first_line(&entry.text))
                         .unwrap_or("");
-                    lines.push(pad_right(&format!("{prefix} {}", truncate_to_width(text, width.saturating_sub(2))), width));
+                    let clipped = truncate_to_width(text, width.saturating_sub(4));
+                    let styled = maybe_style_python(provider, &clipped, selected);
+                    let prefix = if selected { "❯ " } else { "  " };
+                    let visible = 2 + visible_width(&clipped);
+                    lines.push(pad_right_ansi(&format!("{prefix}{styled}"), visible, width));
                 }
             }
         },
@@ -128,20 +139,11 @@ fn render_preview_lines(
         if let Some(match_result) = matches.get(selected_match) {
             if let Some(entry) = entries.get(match_result.entry_index) {
                 let preview = entry.preview.as_deref().unwrap_or(&entry.text);
-                lines.push(pad_right(
-                    &format!("Source: {}  Id: {}", entry.provider_name, entry.id),
-                    width,
-                ));
-                if let Some(timestamp) = entry.timestamp.as_deref() {
-                    lines.push(pad_right(&format!("Timestamp: {}", timestamp), width));
-                }
-                if let Some(path) = entry.metadata.get("path") {
-                    if lines.len() < preview_height {
-                        lines.push(pad_right(&format!("Path: {}", path), width));
-                    }
-                }
                 for line in preview.lines().take(preview_height.saturating_sub(lines.len())) {
-                    lines.push(pad_right(&truncate_to_width(line, width), width));
+                    let clipped = truncate_to_width(line, width.saturating_sub(2));
+                    let styled = maybe_style_python(provider, &clipped, false);
+                    let visible = 2 + visible_width(&clipped);
+                    lines.push(pad_right_ansi(&format!("  {styled}"), visible, width));
                 }
             }
         }
@@ -203,4 +205,145 @@ fn pad_right(text: &str, width: usize) -> String {
     let clipped = truncate_to_width(text, width);
     let padding = width.saturating_sub(UnicodeWidthStr::width(clipped.as_str()));
     format!("{}{}", clipped, " ".repeat(padding))
+}
+
+fn pad_right_ansi(text: &str, visible_len: usize, width: usize) -> String {
+    let padding = width.saturating_sub(visible_len);
+    format!("{}{}", text, " ".repeat(padding))
+}
+
+fn visible_width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
+}
+
+fn section_label(label: &str, width: usize) -> String {
+    let content = format!(" {} ", label);
+    let remaining = width.saturating_sub(visible_width(&content));
+    format!("{}{}", content, "─".repeat(remaining))
+}
+
+fn maybe_style_python(provider: Option<&ProviderState>, text: &str, selected: bool) -> String {
+    let styled = if provider_looks_python(provider) {
+        highlight_python(text)
+    } else {
+        text.to_owned()
+    };
+    if selected {
+        format!("{ANSI_BOLD}{styled}{ANSI_RESET}")
+    } else {
+        styled
+    }
+}
+
+fn footer_ribbons(status: Option<&str>) -> Vec<Text> {
+    let mut ribbons = vec![
+        Text::new(" ENTER ").selected().opaque(),
+        Text::new(" select ").opaque(),
+        Text::new(" ↑↓ ").selected().opaque(),
+        Text::new(" move ").opaque(),
+        Text::new(" TAB ").selected().opaque(),
+        Text::new(" provider ").opaque(),
+        Text::new(" CTRL-R ").selected().opaque(),
+        Text::new(" reload ").opaque(),
+        Text::new(" ESC ").selected().opaque(),
+        Text::new(" close ").opaque(),
+    ];
+    if let Some(status) = status.filter(|status| *status != "ready") {
+        ribbons.push(Text::new(" STATUS ").selected().opaque());
+        ribbons.push(Text::new(format!(" {} ", truncate_to_width(status, 36))).opaque());
+    }
+    ribbons
+}
+
+fn provider_looks_python(provider: Option<&ProviderState>) -> bool {
+    matches!(
+        provider.map(|provider| &provider.config.kind),
+        Some(ProviderKind::IPython(_))
+    )
+}
+
+fn highlight_python(text: &str) -> String {
+    let keywords = [
+        "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+        "elif", "else", "except", "False", "finally", "for", "from", "global", "if", "import",
+        "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return",
+        "True", "try", "while", "with", "yield",
+    ];
+
+    let mut rendered = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '#' {
+            let rest: String = chars[i..].iter().collect();
+            rendered.push_str(ANSI_BRIGHT_BLACK);
+            rendered.push_str(ANSI_ITALIC);
+            rendered.push_str(&rest);
+            rendered.push_str(ANSI_RESET);
+            break;
+        } else if c == '\'' || c == '"' {
+            let quote = c;
+            let start = i;
+            i += 1;
+            while i < chars.len() {
+                if chars[i] == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            let token: String = chars[start..i.min(chars.len())].iter().collect();
+            rendered.push_str(ANSI_GREEN);
+            rendered.push_str(&token);
+            rendered.push_str(ANSI_RESET);
+            continue;
+        } else if c == '%' && (i == 0 || chars[i - 1].is_whitespace()) {
+            let start = i;
+            i += 1;
+            while i < chars.len() && !chars[i].is_whitespace() {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            rendered.push_str(ANSI_YELLOW);
+            rendered.push_str(&token);
+            rendered.push_str(ANSI_RESET);
+            continue;
+        } else if c.is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            rendered.push_str(ANSI_CYAN);
+            rendered.push_str(&token);
+            rendered.push_str(ANSI_RESET);
+            continue;
+        } else if c.is_ascii_alphabetic() || c == '_' {
+            let start = i;
+            i += 1;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            if keywords.contains(&token.as_str()) {
+                rendered.push_str(ANSI_BLUE);
+                rendered.push_str(ANSI_BOLD);
+                rendered.push_str(&token);
+                rendered.push_str(ANSI_RESET);
+            } else {
+                rendered.push_str(&token);
+            }
+            continue;
+        } else {
+            rendered.push(c);
+            i += 1;
+        }
+    }
+    rendered
 }

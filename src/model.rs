@@ -74,6 +74,7 @@ pub struct IPythonConfig {
     pub dedupe: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct HistoryEntry {
     pub id: String,
