@@ -4,15 +4,13 @@ use crate::model::{MatchResult, ProviderKind, ProviderLoadState, ProviderState};
 
 const ANSI_RESET: &str = "\x1b[0m";
 const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_DIM: &str = "\x1b[2m";
 const ANSI_ITALIC: &str = "\x1b[3m";
 const ANSI_BLUE: &str = "\x1b[34m";
 const ANSI_GREEN: &str = "\x1b[32m";
 const ANSI_CYAN: &str = "\x1b[36m";
 const ANSI_YELLOW: &str = "\x1b[33m";
 const ANSI_BRIGHT_BLACK: &str = "\x1b[90m";
-const NORD_RIBBON_SELECTED: &str = "\x1b[38;2;59;66;82m\x1b[48;2;163;190;140m";
-const NORD_RIBBON_UNSELECTED: &str = "\x1b[38;2;59;66;82m\x1b[48;2;216;222;233m";
-const NORD_STATUS_ERROR: &str = "\x1b[38;2;59;66;82m\x1b[48;2;191;97;106m";
 
 pub fn render_screen(
     rows: usize,
@@ -270,51 +268,61 @@ fn footer_hint_line(status: Option<&str>) -> (String, usize) {
     let mut rendered = String::new();
     let mut total_visible_width = 0usize;
 
-    for (is_key, label) in [
-        (true, "ENT"),
-        (false, " select "),
-        (true, "UP/DN"),
-        (false, " move "),
-        (true, "TAB"),
-        (false, " source "),
-        (true, "ESC"),
-        (false, " close "),
+    for segment in [
+        styled_segment("ENTER", ANSI_BOLD),
+        styled_segment(" select", ANSI_DIM),
+        plain_segment("·"),
+        styled_segment("UP/DOWN", ANSI_BOLD),
+        styled_segment(" move", ANSI_DIM),
+        plain_segment("·"),
+        styled_segment("TAB", ANSI_BOLD),
+        styled_segment(" source", ANSI_DIM),
+        plain_segment("·"),
+        styled_segment("ESC", ANSI_BOLD),
+        styled_segment(" close", ANSI_DIM),
+        plain_segment("·"),
+        styled_segment("?", ANSI_BOLD),
+        styled_segment(" help", ANSI_DIM),
     ] {
-        let style = if is_key {
-            NORD_RIBBON_SELECTED
-        } else {
-            NORD_RIBBON_UNSELECTED
-        };
-        rendered.push_str(style);
-        if is_key {
-            rendered.push(' ');
-            rendered.push_str(label);
-            rendered.push(' ');
-        } else {
-            rendered.push_str(label);
-        }
-        rendered.push_str(ANSI_RESET);
-        total_visible_width += if is_key {
-            visible_width(label) + 2
-        } else {
-            visible_width(label)
-        };
+        rendered.push_str(&segment.rendered);
+        total_visible_width += segment.visible_width;
     }
 
     if let Some(status) = status.filter(|status| *status != "ready") {
         let clipped = truncate_to_width(status, 28);
-        rendered.push_str(NORD_STATUS_ERROR);
-        rendered.push_str(" STATUS ");
+        rendered.push_str(ANSI_DIM);
+        rendered.push('·');
         rendered.push_str(ANSI_RESET);
-        rendered.push_str(NORD_RIBBON_UNSELECTED);
-        rendered.push_str(" ");
+        rendered.push_str("\x1b[31m");
+        rendered.push_str("status:");
+        rendered.push_str(ANSI_RESET);
+        rendered.push_str(ANSI_DIM);
+        rendered.push(' ');
         rendered.push_str(&clipped);
-        rendered.push_str(" ");
         rendered.push_str(ANSI_RESET);
-        total_visible_width += visible_width(" STATUS ") + visible_width(&clipped) + 2;
+        total_visible_width += visible_width("·status: ") + visible_width(&clipped);
     }
 
     (rendered, total_visible_width)
+}
+
+struct FooterSegment {
+    rendered: String,
+    visible_width: usize,
+}
+
+fn plain_segment(text: &'static str) -> FooterSegment {
+    FooterSegment {
+        rendered: text.to_owned(),
+        visible_width: visible_width(text),
+    }
+}
+
+fn styled_segment(text: &'static str, style: &'static str) -> FooterSegment {
+    FooterSegment {
+        rendered: format!("{style}{text}{ANSI_RESET}"),
+        visible_width: visible_width(text),
+    }
 }
 
 fn provider_looks_python(provider: Option<&ProviderState>) -> bool {

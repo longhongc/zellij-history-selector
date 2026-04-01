@@ -113,7 +113,7 @@ impl ZellijPlugin for State {
 
     fn render(&mut self, rows: usize, cols: usize) {
         if let Some(error) = self.startup_error.as_deref() {
-            println!("{}", error);
+            print!("{}", error);
             return;
         }
 
@@ -146,7 +146,7 @@ impl ZellijPlugin for State {
             show_footer,
             &target_label,
         );
-        println!("{}", screen);
+        print!("{}", screen);
     }
 }
 
