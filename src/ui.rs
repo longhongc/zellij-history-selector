@@ -1,7 +1,6 @@
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::model::{MatchResult, ProviderKind, ProviderLoadState, ProviderState};
-use zellij_tile::ui_components::{serialize_ribbon_line_with_coordinates, Text};
 
 const ANSI_RESET: &str = "\x1b[0m";
 const ANSI_BOLD: &str = "\x1b[1m";
@@ -11,6 +10,9 @@ const ANSI_GREEN: &str = "\x1b[32m";
 const ANSI_CYAN: &str = "\x1b[36m";
 const ANSI_YELLOW: &str = "\x1b[33m";
 const ANSI_BRIGHT_BLACK: &str = "\x1b[90m";
+const NORD_RIBBON_SELECTED: &str = "\x1b[38;2;59;66;82m\x1b[48;2;163;190;140m";
+const NORD_RIBBON_UNSELECTED: &str = "\x1b[38;2;59;66;82m\x1b[48;2;216;222;233m";
+const NORD_STATUS_ERROR: &str = "\x1b[38;2;59;66;82m\x1b[48;2;191;97;106m";
 
 pub fn render_screen(
     rows: usize,
@@ -22,59 +24,69 @@ pub fn render_screen(
     selected_match: usize,
     preview_lines: usize,
     status: Option<&str>,
+    show_footer: bool,
     target_label: &str,
 ) -> String {
-    let width = cols.max(20);
-    let height = rows.max(8);
-    let content_height = height.saturating_sub(1).max(1);
+    let width = cols.max(1);
+    let height = rows.max(1);
+    let footer_rows = usize::from(show_footer);
+    let content_height = height.saturating_sub(footer_rows);
     let provider = providers.get(current_provider);
-    let title = "zellij-history-selector";
     let provider_name = provider.map(|provider| provider.config.name.as_str()).unwrap_or("none");
     let provider_state = provider
         .map(|provider| format_provider_state(&provider.load_state))
         .unwrap_or_else(|| "missing".to_owned());
 
-    let fixed_rows = 4usize;
-    let preview_height = preview_lines
-        .min(content_height.saturating_sub(fixed_rows))
-        .min(content_height / 3)
-        .max(3);
-    let list_height = content_height.saturating_sub(fixed_rows + preview_height);
+    let header_rows = content_height.min(3);
+    let preview_header_rows = usize::from(content_height > header_rows + 1);
+    let max_preview_body = content_height
+        .saturating_sub(header_rows + preview_header_rows + 1);
+    let preview_body_height = if max_preview_body == 0 {
+        0
+    } else {
+        preview_lines.min(max_preview_body).min(content_height / 3)
+    };
+    let preview_header_rows = usize::from(preview_body_height > 0);
+    let list_height = content_height
+        .saturating_sub(header_rows + preview_header_rows + preview_body_height);
 
     let mut lines = Vec::with_capacity(content_height);
-    lines.push(pad_right(title, width));
     lines.push(pad_right(
         &format!("Provider: {} [{}]  Target: {}", provider_name, provider_state, target_label),
         width,
     ));
-    lines.push(pad_right(&format!("Search: {}", query), width));
+    if content_height > 1 {
+        lines.push(pad_right(&format!("> {}", query), width));
+    }
+    if content_height > 2 {
+        lines.push(pad_right(&match_count_line(provider, matches, width), width));
+    }
 
     let rendered_matches = render_match_lines(provider, matches, selected_match, width, list_height);
     lines.extend(rendered_matches);
 
-    lines.push(pad_right(&section_label("Preview", width), width));
-    lines.extend(render_preview_lines(
-        provider,
-        matches,
-        selected_match,
-        width,
-        preview_height.saturating_sub(1),
-    ));
-
-    lines.truncate(content_height);
-    while lines.len() < content_height {
-        lines.push(" ".repeat(width));
+    if preview_body_height > 0 {
+        lines.push(pad_right(&section_label("Preview", width), width));
+        lines.extend(render_preview_lines(
+            provider,
+            matches,
+            selected_match,
+            width,
+            preview_body_height,
+        ));
     }
 
-    let mut rendered = lines.join("\n");
-    rendered.push_str(&serialize_ribbon_line_with_coordinates(
-        footer_ribbons(status),
-        0,
-        rows.saturating_sub(1),
-        Some(cols),
-        Some(1),
-    ));
-    rendered
+    if show_footer {
+        let (footer, footer_visible_width) = footer_hint_line(status);
+        while lines.len() + 1 < height {
+            lines.push(" ".repeat(width));
+        }
+        lines.push(pad_right_ansi(&footer, footer_visible_width, width));
+        lines.truncate(height);
+    } else {
+        lines.truncate(content_height);
+    }
+    lines.join("\n")
 }
 
 fn render_match_lines(
@@ -217,9 +229,24 @@ fn visible_width(text: &str) -> usize {
 }
 
 fn section_label(label: &str, width: usize) -> String {
-    let content = format!(" {} ", label);
+    let content = format!("{} ", label);
     let remaining = width.saturating_sub(visible_width(&content));
     format!("{}{}", content, "─".repeat(remaining))
+}
+
+fn match_count_line(
+    provider: Option<&ProviderState>,
+    matches: &[MatchResult],
+    width: usize,
+) -> String {
+    let total = match provider.map(|provider| &provider.load_state) {
+        Some(ProviderLoadState::Ready(entries)) => entries.len(),
+        _ => 0,
+    };
+    let matched = matches.len();
+    let prefix = format!("{matched}/{total} ");
+    let divider = "─".repeat(width.saturating_sub(visible_width(&prefix)));
+    format!("{prefix}{divider}")
 }
 
 fn maybe_style_python(provider: Option<&ProviderState>, text: &str, selected: bool) -> String {
@@ -235,24 +262,55 @@ fn maybe_style_python(provider: Option<&ProviderState>, text: &str, selected: bo
     }
 }
 
-fn footer_ribbons(status: Option<&str>) -> Vec<Text> {
-    let mut ribbons = vec![
-        Text::new(" ENTER ").selected().opaque(),
-        Text::new(" select ").opaque(),
-        Text::new(" ↑↓ ").selected().opaque(),
-        Text::new(" move ").opaque(),
-        Text::new(" TAB ").selected().opaque(),
-        Text::new(" provider ").opaque(),
-        Text::new(" CTRL-R ").selected().opaque(),
-        Text::new(" reload ").opaque(),
-        Text::new(" ESC ").selected().opaque(),
-        Text::new(" close ").opaque(),
-    ];
-    if let Some(status) = status.filter(|status| *status != "ready") {
-        ribbons.push(Text::new(" STATUS ").selected().opaque());
-        ribbons.push(Text::new(format!(" {} ", truncate_to_width(status, 36))).opaque());
+fn footer_hint_line(status: Option<&str>) -> (String, usize) {
+    let mut rendered = String::new();
+    let mut total_visible_width = 0usize;
+
+    for (is_key, label) in [
+        (true, "ENT"),
+        (false, " select "),
+        (true, "UP/DN"),
+        (false, " move "),
+        (true, "TAB"),
+        (false, " source "),
+        (true, "ESC"),
+        (false, " close "),
+    ] {
+        let style = if is_key {
+            NORD_RIBBON_SELECTED
+        } else {
+            NORD_RIBBON_UNSELECTED
+        };
+        rendered.push_str(style);
+        if is_key {
+            rendered.push(' ');
+            rendered.push_str(label);
+            rendered.push(' ');
+        } else {
+            rendered.push_str(label);
+        }
+        rendered.push_str(ANSI_RESET);
+        total_visible_width += if is_key {
+            visible_width(label) + 2
+        } else {
+            visible_width(label)
+        };
     }
-    ribbons
+
+    if let Some(status) = status.filter(|status| *status != "ready") {
+        let clipped = truncate_to_width(status, 28);
+        rendered.push_str(NORD_STATUS_ERROR);
+        rendered.push_str(" STATUS ");
+        rendered.push_str(ANSI_RESET);
+        rendered.push_str(NORD_RIBBON_UNSELECTED);
+        rendered.push_str(" ");
+        rendered.push_str(&clipped);
+        rendered.push_str(" ");
+        rendered.push_str(ANSI_RESET);
+        total_visible_width += visible_width(" STATUS ") + visible_width(&clipped) + 2;
+    }
+
+    (rendered, total_visible_width)
 }
 
 fn provider_looks_python(provider: Option<&ProviderState>) -> bool {

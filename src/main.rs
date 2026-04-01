@@ -34,6 +34,7 @@ struct State {
     pending_requests: HashMap<String, usize>,
     next_request_id: usize,
     initialized: bool,
+    help_visible: bool,
 }
 
 register_plugin!(State);
@@ -60,6 +61,7 @@ impl ZellijPlugin for State {
                     .map(ProviderState::new)
                     .collect();
                 self.app_config = Some(app_config);
+                self.help_visible = true;
                 self.request_permissions();
             },
             Err(error) => {
@@ -130,6 +132,7 @@ impl ZellijPlugin for State {
             .as_ref()
             .map(|config| config.preview_lines)
             .unwrap_or(12);
+        let show_footer = self.help_visible || status.is_some();
         let screen = ui::render_screen(
             rows,
             cols,
@@ -140,6 +143,7 @@ impl ZellijPlugin for State {
             self.selected_match,
             preview_lines,
             status,
+            show_footer,
             &target_label,
         );
         println!("{}", screen);
@@ -276,44 +280,54 @@ impl State {
                 false
             },
             BareKey::Enter => {
+                self.hide_help();
                 self.select_current_entry();
                 true
             },
             BareKey::Up => {
+                self.hide_help();
                 self.move_selection(-1);
                 true
             },
             BareKey::Down => {
+                self.hide_help();
                 self.move_selection(1);
                 true
             },
             BareKey::PageUp => {
+                self.hide_help();
                 self.move_selection(-10);
                 true
             },
             BareKey::PageDown => {
+                self.hide_help();
                 self.move_selection(10);
                 true
             },
             BareKey::Home => {
+                self.hide_help();
                 self.selected_match = 0;
                 true
             },
             BareKey::End => {
+                self.hide_help();
                 self.selected_match = self.filtered.len().saturating_sub(1);
                 true
             },
             BareKey::Backspace => {
+                self.hide_help();
                 self.query.pop();
                 self.recompute_matches();
                 true
             },
             BareKey::Delete => {
+                self.hide_help();
                 self.query.clear();
                 self.recompute_matches();
                 true
             },
             BareKey::Tab => {
+                self.hide_help();
                 if key.key_modifiers.contains(&KeyModifier::Shift) {
                     self.cycle_provider(-1);
                 } else {
@@ -322,21 +336,32 @@ impl State {
                 true
             },
             BareKey::Char(character) => {
+                if !key.key_modifiers.contains(&KeyModifier::Ctrl)
+                    && !key.key_modifiers.contains(&KeyModifier::Alt)
+                    && character == '?'
+                {
+                    self.help_visible = !self.help_visible;
+                    return true;
+                }
                 if is_ctrl_char(&key, 'j') {
+                    self.hide_help();
                     self.move_selection(1);
                     return true;
                 }
                 if is_ctrl_char(&key, 'k') {
+                    self.hide_help();
                     self.move_selection(-1);
                     return true;
                 }
                 if is_ctrl_char(&key, 'r') {
+                    self.hide_help();
                     self.reload_current_provider();
                     return true;
                 }
                 if !key.key_modifiers.contains(&KeyModifier::Ctrl)
                     && !key.key_modifiers.contains(&KeyModifier::Alt)
                 {
+                    self.hide_help();
                     self.query.push(character);
                     self.recompute_matches();
                     return true;
@@ -449,6 +474,10 @@ impl State {
             pane_info.id == pane_id_number(target_pane)
                 && pane_info.is_plugin == pane_id_is_plugin(target_pane)
         })
+    }
+
+    fn hide_help(&mut self) {
+        self.help_visible = false;
     }
 }
 
