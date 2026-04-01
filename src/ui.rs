@@ -38,17 +38,19 @@ pub fn render_screen(
         .unwrap_or_else(|| "missing".to_owned());
 
     let header_rows = content_height.min(3);
-    let preview_header_rows = usize::from(content_height > header_rows + 1);
+    let spacer_rows = usize::from(content_height > header_rows);
+    let preview_header_rows = usize::from(content_height > header_rows + spacer_rows);
     let max_preview_body = content_height
-        .saturating_sub(header_rows + preview_header_rows + 1);
+        .saturating_sub(header_rows + spacer_rows + preview_header_rows);
     let preview_body_height = if max_preview_body == 0 {
         0
     } else {
         preview_lines.min(max_preview_body).min(content_height / 3)
     };
     let preview_header_rows = usize::from(preview_body_height > 0);
+    let spacer_rows = usize::from(preview_body_height > 0);
     let list_height = content_height
-        .saturating_sub(header_rows + preview_header_rows + preview_body_height);
+        .saturating_sub(header_rows + spacer_rows + preview_header_rows + preview_body_height);
 
     let mut lines = Vec::with_capacity(content_height);
     lines.push(pad_right(
@@ -66,6 +68,7 @@ pub fn render_screen(
     lines.extend(rendered_matches);
 
     if preview_body_height > 0 {
+        lines.push(" ".repeat(width));
         lines.push(pad_right(&section_label("Preview", width), width));
         lines.extend(render_preview_lines(
             provider,
@@ -129,6 +132,7 @@ fn render_match_lines(
         },
     }
 
+    lines.truncate(list_height);
     while lines.len() < list_height {
         lines.push(" ".repeat(width));
     }
