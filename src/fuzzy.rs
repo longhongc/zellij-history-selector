@@ -18,7 +18,7 @@ pub fn filter_entries(
             .take(max_results)
             .map(|(entry_index, entry)| MatchResult {
                 entry_index,
-                score: entry.score_hint.unwrap_or(0) + (entries.len().saturating_sub(entry_index) as i64),
+                score: entry.score_hint + (entries.len().saturating_sub(entry_index) as i64),
             })
             .collect();
     }
@@ -48,7 +48,7 @@ pub fn filter_entries(
 
 fn score_entry(entry: &HistoryEntry, query_tokens: &[String], case_sensitive: bool) -> Option<i64> {
     let haystack = normalize(&entry.text, case_sensitive);
-    let mut total = entry.score_hint.unwrap_or(0);
+    let mut total = entry.score_hint;
 
     for token in query_tokens {
         let token_score = score_token(&haystack, token)?;
@@ -109,17 +109,12 @@ fn normalize(value: &str, case_sensitive: bool) -> String {
 mod tests {
     use super::filter_entries;
     use crate::model::HistoryEntry;
-    use std::collections::BTreeMap;
 
     fn entry(text: &str) -> HistoryEntry {
         HistoryEntry {
-            id: text.to_owned(),
-            provider_name: "test".to_owned(),
             text: text.to_owned(),
             preview: None,
-            timestamp: None,
-            score_hint: None,
-            metadata: BTreeMap::new(),
+            score_hint: 0,
         }
     }
 

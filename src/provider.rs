@@ -10,6 +10,8 @@ use crate::model::{
     SqliteQueryConfig, SplitMode,
 };
 
+const MAX_STORED_ENTRY_BYTES: usize = 4 * 1024 * 1024;
+
 pub const SQLITE_HELPER: &str = r#"
 import json
 import sqlite3
@@ -80,13 +82,9 @@ pub fn load_file_provider(config: &ProviderConfig) -> Result<Vec<HistoryEntry>, 
         .into_iter()
         .enumerate()
         .map(|(index, text)| HistoryEntry {
-            id: format!("{}:{index}", config.name),
-            provider_name: config.name.clone(),
-            preview: multiline_preview(&text),
+            preview: None,
             text,
-            timestamp: None,
-            score_hint: Some((file_config.limit.saturating_sub(index)) as i64),
-            metadata: BTreeMap::from([("path".to_owned(), file_config.path.clone())]),
+            score_hint: (file_config.limit.saturating_sub(index)) as i64,
         })
         .collect::<Vec<_>>();
 
@@ -155,13 +153,9 @@ fn parse_line_output(
             .filter(|line| !line.trim().is_empty())
             .enumerate()
             .map(|(index, text)| HistoryEntry {
-                id: format!("{}:{index}", config.name),
-                provider_name: config.name.clone(),
                 text: text.to_owned(),
                 preview: None,
-                timestamp: None,
-                score_hint: Some((command_config.limit.saturating_sub(index)) as i64),
-                metadata: BTreeMap::new(),
+                score_hint: (command_config.limit.saturating_sub(index)) as i64,
             })
             .collect::<Vec<_>>(),
     };
@@ -224,19 +218,12 @@ fn parse_sqlite_output(
         let preview = sqlite_config
             .preview_column
             .and_then(|column| get_column(&row.values, column).map(str::to_owned))
-            .or_else(|| multiline_preview(text));
-        let timestamp = sqlite_config
-            .timestamp_column
-            .and_then(|column| get_column(&row.values, column).map(str::to_owned));
+            .filter(|preview| preview != text);
 
         entries.push(HistoryEntry {
-            id: format!("{}:{index}", config.name),
-            provider_name: config.name.clone(),
             text: text.to_owned(),
             preview,
-            timestamp,
-            score_hint: Some((sqlite_config.limit.saturating_sub(index)) as i64),
-            metadata: BTreeMap::from([("path".to_owned(), sqlite_config.path.clone())]),
+            score_hint: (sqlite_config.limit.saturating_sub(index)) as i64,
         });
     }
 
@@ -247,10 +234,6 @@ fn get_column(values: &[Option<String>], index: usize) -> Option<&str> {
     values.get(index).and_then(|value| value.as_deref())
 }
 
-fn multiline_preview(text: &str) -> Option<String> {
-    text.contains('\n').then(|| text.to_owned())
-}
-
 fn finalize_entries(mut entries: Vec<HistoryEntry>, dedupe: bool, limit: usize) -> Vec<HistoryEntry> {
     if dedupe {
         let mut seen = HashSet::new();
@@ -259,6 +242,16 @@ fn finalize_entries(mut entries: Vec<HistoryEntry>, dedupe: bool, limit: usize) 
     if entries.len() > limit {
         entries.truncate(limit);
     }
+    let mut total_bytes = 0usize;
+    entries.retain(|entry| {
+        let entry_bytes =
+            entry.text.len() + entry.preview.as_ref().map(|preview| preview.len()).unwrap_or(0);
+        if total_bytes + entry_bytes > MAX_STORED_ENTRY_BYTES {
+            return false;
+        }
+        total_bytes += entry_bytes;
+        true
+    });
     entries
 }
 

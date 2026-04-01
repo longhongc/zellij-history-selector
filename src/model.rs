@@ -45,6 +45,7 @@ pub struct SqliteQueryConfig {
     pub query: String,
     pub text_column: usize,
     pub preview_column: Option<usize>,
+    #[allow(dead_code)]
     pub timestamp_column: Option<usize>,
     pub limit: usize,
     pub dedupe: bool,
@@ -74,16 +75,11 @@ pub struct IPythonConfig {
     pub dedupe: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct HistoryEntry {
-    pub id: String,
-    pub provider_name: String,
     pub text: String,
     pub preview: Option<String>,
-    pub timestamp: Option<String>,
-    pub score_hint: Option<i64>,
-    pub metadata: BTreeMap<String, String>,
+    pub score_hint: i64,
 }
 
 #[derive(Clone, Debug)]
