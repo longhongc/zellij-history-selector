@@ -76,7 +76,9 @@ fn score_token(haystack: &str, token: &str) -> Option<i64> {
     for needle_char in token.chars() {
         let found = haystack[search_from..]
             .char_indices()
-            .find_map(|(offset, candidate)| (candidate == needle_char).then_some(search_from + offset));
+            .find_map(|(offset, candidate)| {
+                (candidate == needle_char).then_some(search_from + offset)
+            });
         let position = found?;
         total += 25;
         if let Some(last_match) = last_match {

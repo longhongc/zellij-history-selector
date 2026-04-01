@@ -4,11 +4,15 @@
 
 ## Status
 
-This repository implements the v1 spec from [`project_spec.md`](/home/longhongc/project/zellij-history-selector/project_spec.md) with one compatibility adjustment:
+This repository implements the plugin with a flat-config compatibility model for Zellij `0.44.x`:
 
 - Zellij `0.44.x` passes plugin config to Rust as a flat key/value map.
 - Because of that, repeated nested `provider { ... }` blocks from the spec cannot be deserialized literally.
-- V1 therefore uses flat indexed keys like `provider_1_type`, `provider_1_name`, `provider_1_path`.
+- The current implementation now supports:
+  - preferred namespaced config with `providers` plus keys like `provider.shell.type`
+  - legacy indexed keys like `provider_1_type` as a fallback for older setups
+
+The config direction and rationale are documented in [`CONFIG_V2_SPEC.md`](/home/longhongc/project/zellij-history-selector/CONFIG_V2_SPEC.md).
 
 ## Build
 
@@ -29,7 +33,7 @@ target/wasm32-wasip1/release/zellij-history-selector.wasm
 keybinds {
   shared_except "locked" {
     bind "Alt h" {
-      LaunchOrFocusPlugin "file:~/.config/zellij/plugins/zellij-history-selector.wasm" {
+      LaunchOrFocusPlugin "zellij-history-selector" {
         floating true
       }
     }
@@ -44,33 +48,35 @@ plugins {
     preview_lines 12
     case_sensitive false
 
-    provider_1_type "ipython"
-    provider_1_name "IPython"
-    provider_1_path "~/.ipython/profile_default/history.sqlite"
-    provider_1_limit "5000"
-    provider_1_dedupe "true"
+    providers "ipython,bash,sqlite,custom"
 
-    provider_2_type "file_lines"
-    provider_2_name "Bash"
-    provider_2_path "~/.bash_history"
-    provider_2_reverse "true"
-    provider_2_dedupe "true"
-    provider_2_limit "5000"
+    provider.ipython.type "ipython"
+    provider.ipython.name "IPython"
+    provider.ipython.path "~/.ipython/profile_default/history.sqlite"
+    provider.ipython.limit "5000"
+    provider.ipython.dedupe "true"
 
-    provider_3_type "sqlite_query"
-    provider_3_name "SQLite Commands"
-    provider_3_path "~/.local/share/my_history.sqlite"
-    provider_3_query "SELECT command, created_at FROM command_history ORDER BY created_at DESC LIMIT 5000"
-    provider_3_text_column "0"
-    provider_3_timestamp_column "1"
-    provider_3_dedupe "true"
+    provider.bash.type "file_lines"
+    provider.bash.name "Bash"
+    provider.bash.path "~/.bash_history"
+    provider.bash.reverse "true"
+    provider.bash.dedupe "true"
+    provider.bash.limit "5000"
 
-    provider_4_type "command"
-    provider_4_name "Custom"
-    provider_4_command "python3"
-    provider_4_args "-m my_history_exporter"
-    provider_4_limit "5000"
-    provider_4_dedupe "true"
+    provider.sqlite.type "sqlite_query"
+    provider.sqlite.name "SQLite Commands"
+    provider.sqlite.path "~/.local/share/my_history.sqlite"
+    provider.sqlite.query "SELECT command, created_at FROM command_history ORDER BY created_at DESC LIMIT 5000"
+    provider.sqlite.text_column "0"
+    provider.sqlite.timestamp_column "1"
+    provider.sqlite.dedupe "true"
+
+    provider.custom.type "command_lines"
+    provider.custom.name "Custom"
+    provider.custom.command "python3"
+    provider.custom.args "-m my_history_exporter"
+    provider.custom.limit "5000"
+    provider.custom.dedupe "true"
   }
 }
 ```
@@ -91,11 +97,16 @@ If you launch the raw `file:/.../plugin.wasm` URL directly, Zellij will not appl
 
 - `file_lines`
 - `sqlite_query`
-- `command`
+- `command_lines`
 - `ipython`
+
+Legacy compatibility:
+- `command` still works as an alias for `command_lines`
+- `provider_1_*` style numbered config still works as a fallback
 
 ## Notes
 
 - `file_lines` reads through Zellij's WASI host mount and needs filesystem permission.
-- `command` and SQLite-backed providers use Zellij host command execution.
+- `command_lines` and SQLite-backed providers use Zellij host command execution.
 - `sqlite_query` and `ipython` currently use host `python3` for read-only SQLite access.
+- Do not use nested `provider { ... }` blocks with the current implementation.

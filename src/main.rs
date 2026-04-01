@@ -68,10 +68,10 @@ impl ZellijPlugin for State {
                 self.app_config = Some(app_config);
                 self.help_visible = true;
                 self.request_permissions();
-            },
+            }
             Err(error) => {
                 self.startup_error = Some(error);
-            },
+            }
         }
     }
 
@@ -80,14 +80,14 @@ impl ZellijPlugin for State {
             Event::PermissionRequestResult(status) => {
                 self.handle_permission_result(status);
                 true
-            },
+            }
             Event::ListClients(clients) => {
                 if let Some(client) = clients.into_iter().find(|client| client.is_current_client) {
                     self.target_pane = Some(client.pane_id);
                     self.try_start_loading();
                 }
                 true
-            },
+            }
             Event::PaneUpdate(pane_manifest) => {
                 if self.target_pane.is_none() {
                     self.target_pane = preferred_target_from_manifest(&pane_manifest);
@@ -95,22 +95,22 @@ impl ZellijPlugin for State {
                 self.pane_manifest = Some(pane_manifest);
                 self.try_start_loading();
                 true
-            },
+            }
             Event::HostFolderChanged(_path) => {
                 self.host_ready = true;
                 self.try_start_loading();
                 true
-            },
+            }
             Event::FailedToChangeHostFolder(error) => {
                 self.status_message = Some(
                     error.unwrap_or_else(|| "Failed to mount /host at filesystem root".to_owned()),
                 );
                 true
-            },
+            }
             Event::RunCommandResult(exit_code, stdout, stderr, context) => {
                 self.handle_run_command_result(exit_code, stdout, stderr, context);
                 true
-            },
+            }
             Event::Key(key) => self.handle_key(key),
             _ => false,
         };
@@ -212,7 +212,11 @@ impl State {
             PermissionType::ChangeApplicationState,
             PermissionType::WriteToStdin,
         ]);
-        if app_config.providers.iter().any(provider_requires_run_commands) {
+        if app_config
+            .providers
+            .iter()
+            .any(provider_requires_run_commands)
+        {
             permissions.insert(PermissionType::RunCommands);
         }
         if self.needs_host_root {
@@ -232,13 +236,13 @@ impl State {
                     self.host_ready = true;
                     self.try_start_loading();
                 }
-            },
+            }
             PermissionStatus::Denied => {
                 self.status_message = Some(
                     "Permission request denied. The plugin needs application state access, pane writes, and provider-specific filesystem/command permissions."
                         .to_owned(),
                 );
-            },
+            }
         }
     }
 
@@ -262,27 +266,38 @@ impl State {
         };
         self.status_message = None;
         self.selected_match = 0;
-        match load_current_provider(provider_state, self.current_provider, &mut self.next_request_id) {
+        match load_current_provider(
+            provider_state,
+            self.current_provider,
+            &mut self.next_request_id,
+        ) {
             LoadOutcome::Ready(entries) => {
                 provider_state.load_state = ProviderLoadState::Ready(entries);
                 self.recompute_matches();
-            },
-            LoadOutcome::Pending { request_id, invocation } => {
+            }
+            LoadOutcome::Pending {
+                request_id,
+                invocation,
+            } => {
                 provider_state.load_state = ProviderLoadState::Loading;
                 self.pending_requests
                     .insert(request_id.clone(), self.current_provider);
                 self.run_command_invocation(&request_id, invocation);
                 self.recompute_matches();
-            },
+            }
             LoadOutcome::Error(error) => {
                 provider_state.load_state = ProviderLoadState::Error(error);
                 self.recompute_matches();
-            },
+            }
         }
     }
 
     fn run_command_invocation(&mut self, request_id: &str, invocation: CommandInvocation) {
-        let argv_refs = invocation.argv.iter().map(String::as_str).collect::<Vec<_>>();
+        let argv_refs = invocation
+            .argv
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         let context = BTreeMap::from([("request_id".to_owned(), request_id.to_owned())]);
         if let Some(cwd) = invocation.cwd {
             run_command_with_env_variables_and_cwd(&argv_refs, invocation.env, cwd, context);
@@ -329,54 +344,54 @@ impl State {
             BareKey::Esc => {
                 close_self();
                 false
-            },
+            }
             BareKey::Enter => {
                 self.hide_help();
                 self.select_current_entry();
                 true
-            },
+            }
             BareKey::Up => {
                 self.hide_help();
                 self.move_selection(-1);
                 true
-            },
+            }
             BareKey::Down => {
                 self.hide_help();
                 self.move_selection(1);
                 true
-            },
+            }
             BareKey::PageUp => {
                 self.hide_help();
                 self.move_selection(-10);
                 true
-            },
+            }
             BareKey::PageDown => {
                 self.hide_help();
                 self.move_selection(10);
                 true
-            },
+            }
             BareKey::Home => {
                 self.hide_help();
                 self.selected_match = 0;
                 true
-            },
+            }
             BareKey::End => {
                 self.hide_help();
                 self.selected_match = self.filtered.len().saturating_sub(1);
                 true
-            },
+            }
             BareKey::Backspace => {
                 self.hide_help();
                 self.query.pop();
                 self.recompute_matches();
                 true
-            },
+            }
             BareKey::Delete => {
                 self.hide_help();
                 self.query.clear();
                 self.recompute_matches();
                 true
-            },
+            }
             BareKey::Tab => {
                 self.hide_help();
                 if key.key_modifiers.contains(&KeyModifier::Shift) {
@@ -385,7 +400,7 @@ impl State {
                     self.cycle_provider(1);
                 }
                 true
-            },
+            }
             BareKey::Char(character) => {
                 if !key.key_modifiers.contains(&KeyModifier::Ctrl)
                     && !key.key_modifiers.contains(&KeyModifier::Alt)
@@ -418,7 +433,7 @@ impl State {
                     return true;
                 }
                 false
-            },
+            }
             _ => false,
         }
     }
@@ -444,7 +459,8 @@ impl State {
             self.selected_match = 0;
             return;
         }
-        let next = (self.selected_match as isize + delta).clamp(0, self.filtered.len() as isize - 1);
+        let next =
+            (self.selected_match as isize + delta).clamp(0, self.filtered.len() as isize - 1);
         self.selected_match = next as usize;
     }
 
@@ -480,12 +496,12 @@ impl State {
         let Some(app_config) = self.app_config.as_ref() else {
             return;
         };
-        let Some(target_pane) = self
-            .target_pane
-            .or_else(|| self.pane_manifest.as_ref().and_then(preferred_target_from_manifest))
-        else {
-            self.status_message =
-                Some("Could not resolve a target pane for insertion.".to_owned());
+        let Some(target_pane) = self.target_pane.or_else(|| {
+            self.pane_manifest
+                .as_ref()
+                .and_then(preferred_target_from_manifest)
+        }) else {
+            self.status_message = Some("Could not resolve a target pane for insertion.".to_owned());
             return;
         };
         self.target_pane = Some(target_pane);
@@ -555,14 +571,15 @@ fn load_current_provider(
             Ok(mut invocation) => {
                 let request_id = format!("provider-{provider_index}-{}", *next_request_id);
                 *next_request_id += 1;
-                invocation
-                    .env
-                    .insert("ZHS_PROVIDER".to_owned(), provider_state.config.name.clone());
+                invocation.env.insert(
+                    "ZHS_PROVIDER".to_owned(),
+                    provider_state.config.name.clone(),
+                );
                 LoadOutcome::Pending {
                     request_id,
                     invocation,
                 }
-            },
+            }
             Err(error) => LoadOutcome::Error(error),
         },
     }

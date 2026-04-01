@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::model::{
     CommandConfig, FileLinesConfig, HistoryEntry, IPythonConfig, ProviderConfig, ProviderKind,
-    SqliteQueryConfig, SplitMode,
+    SplitMode, SqliteQueryConfig,
 };
 
 const MAX_STORED_ENTRY_BYTES: usize = 4 * 1024 * 1024;
@@ -65,8 +65,8 @@ pub fn load_file_provider(config: &ProviderConfig) -> Result<Vec<HistoryEntry>, 
     };
 
     let path = config_path_to_wasi(&file_config.path)?;
-    let contents =
-        fs::read_to_string(&path).map_err(|error| format!("Failed to read {}: {error}", file_config.path))?;
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read {}: {error}", file_config.path))?;
     let mut lines = contents
         .lines()
         .map(str::trim_end)
@@ -88,7 +88,11 @@ pub fn load_file_provider(config: &ProviderConfig) -> Result<Vec<HistoryEntry>, 
         })
         .collect::<Vec<_>>();
 
-    Ok(finalize_entries(entries, file_config.dedupe, file_config.limit))
+    Ok(finalize_entries(
+        entries,
+        file_config.dedupe,
+        file_config.limit,
+    ))
 }
 
 pub fn build_command_invocation(config: &ProviderConfig) -> Result<CommandInvocation, String> {
@@ -108,8 +112,10 @@ pub fn build_command_invocation(config: &ProviderConfig) -> Result<CommandInvoca
         ProviderKind::IPython(ipython_config) => {
             let sqlite_config = ipython_to_sqlite(ipython_config);
             build_sqlite_invocation(&sqlite_config)
-        },
-        ProviderKind::FileLines(_) => Err("Internal error: file_lines is not a command provider".to_owned()),
+        }
+        ProviderKind::FileLines(_) => {
+            Err("Internal error: file_lines is not a command provider".to_owned())
+        }
     }
 }
 
@@ -121,8 +127,26 @@ pub fn parse_command_output(
 ) -> Result<Vec<HistoryEntry>, String> {
     if exit_code != Some(0) {
         let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(stdout).trim().to_owned();
         return Err(if stderr.is_empty() {
-            format!("Provider '{}' failed with exit code {:?}", config.name, exit_code)
+            if stdout.is_empty() {
+                match &config.kind {
+                    ProviderKind::SqliteQuery(sqlite_config) => format!(
+                        "Provider '{}' failed with exit code {:?}. Check SQLite path and query: {}",
+                        config.name, exit_code, sqlite_config.path
+                    ),
+                    ProviderKind::IPython(ipython_config) => format!(
+                        "Provider '{}' failed with exit code {:?}. Check IPython history path: {}",
+                        config.name, exit_code, ipython_config.path
+                    ),
+                    _ => format!(
+                        "Provider '{}' failed with exit code {:?}",
+                        config.name, exit_code
+                    ),
+                }
+            } else {
+                format!("Provider '{}' failed: {}", config.name, stdout)
+            }
         } else {
             format!("Provider '{}' failed: {}", config.name, stderr)
         });
@@ -130,12 +154,16 @@ pub fn parse_command_output(
 
     match &config.kind {
         ProviderKind::Command(command_config) => parse_line_output(config, command_config, stdout),
-        ProviderKind::SqliteQuery(sqlite_config) => parse_sqlite_output(config, sqlite_config, stdout),
+        ProviderKind::SqliteQuery(sqlite_config) => {
+            parse_sqlite_output(config, sqlite_config, stdout)
+        }
         ProviderKind::IPython(ipython_config) => {
             let sqlite_config = ipython_to_sqlite(ipython_config);
             parse_sqlite_output(config, &sqlite_config, stdout)
-        },
-        ProviderKind::FileLines(_) => Err("Internal error: file_lines does not use command output".to_owned()),
+        }
+        ProviderKind::FileLines(_) => {
+            Err("Internal error: file_lines does not use command output".to_owned())
+        }
     }
 }
 
@@ -160,11 +188,24 @@ fn parse_line_output(
             .collect::<Vec<_>>(),
     };
 
-    Ok(finalize_entries(entries, command_config.dedupe, command_config.limit))
+    Ok(finalize_entries(
+        entries,
+        command_config.dedupe,
+        command_config.limit,
+    ))
 }
 
 fn build_sqlite_invocation(sqlite_config: &SqliteQueryConfig) -> Result<CommandInvocation, String> {
     let path = expand_host_path(&sqlite_config.path)?;
+    let wasi_path = config_path_to_wasi(&sqlite_config.path)?;
+    let metadata = fs::metadata(&wasi_path)
+        .map_err(|error| format!("Failed to read SQLite database {}: {error}", sqlite_config.path))?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "SQLite database path is not a file: {}",
+            sqlite_config.path
+        ));
+    }
     Ok(CommandInvocation {
         argv: vec![
             "python3".to_owned(),
@@ -209,12 +250,23 @@ fn parse_sqlite_output(
         .map_err(|error| format!("Provider '{}' returned invalid UTF-8: {error}", config.name))?;
     let mut entries = Vec::new();
 
-    for (index, line) in output.lines().filter(|line| !line.trim().is_empty()).enumerate() {
+    for (index, line) in output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+    {
         let row: SqliteRow = serde_json::from_str(line).map_err(|error| {
-            format!("Provider '{}' returned invalid SQLite JSON rows: {error}", config.name)
+            format!(
+                "Provider '{}' returned invalid SQLite JSON rows: {error}",
+                config.name
+            )
         })?;
-        let text = get_column(&row.values, sqlite_config.text_column)
-            .ok_or_else(|| format!("Provider '{}' missing text column {}", config.name, sqlite_config.text_column))?;
+        let text = get_column(&row.values, sqlite_config.text_column).ok_or_else(|| {
+            format!(
+                "Provider '{}' missing text column {}",
+                config.name, sqlite_config.text_column
+            )
+        })?;
         let preview = sqlite_config
             .preview_column
             .and_then(|column| get_column(&row.values, column).map(str::to_owned))
@@ -227,14 +279,22 @@ fn parse_sqlite_output(
         });
     }
 
-    Ok(finalize_entries(entries, sqlite_config.dedupe, sqlite_config.limit))
+    Ok(finalize_entries(
+        entries,
+        sqlite_config.dedupe,
+        sqlite_config.limit,
+    ))
 }
 
 fn get_column(values: &[Option<String>], index: usize) -> Option<&str> {
     values.get(index).and_then(|value| value.as_deref())
 }
 
-fn finalize_entries(mut entries: Vec<HistoryEntry>, dedupe: bool, limit: usize) -> Vec<HistoryEntry> {
+fn finalize_entries(
+    mut entries: Vec<HistoryEntry>,
+    dedupe: bool,
+    limit: usize,
+) -> Vec<HistoryEntry> {
     if dedupe {
         let mut seen = HashSet::new();
         entries.retain(|entry| seen.insert(entry.text.clone()));
@@ -244,8 +304,12 @@ fn finalize_entries(mut entries: Vec<HistoryEntry>, dedupe: bool, limit: usize) 
     }
     let mut total_bytes = 0usize;
     entries.retain(|entry| {
-        let entry_bytes =
-            entry.text.len() + entry.preview.as_ref().map(|preview| preview.len()).unwrap_or(0);
+        let entry_bytes = entry.text.len()
+            + entry
+                .preview
+                .as_ref()
+                .map(|preview| preview.len())
+                .unwrap_or(0);
         if total_bytes + entry_bytes > MAX_STORED_ENTRY_BYTES {
             return false;
         }
@@ -258,7 +322,9 @@ fn finalize_entries(mut entries: Vec<HistoryEntry>, dedupe: bool, limit: usize) 
 fn config_path_to_wasi(path: &str) -> Result<PathBuf, String> {
     let host_path = expand_host_path(path)?;
     if !host_path.is_absolute() {
-        return Err(format!("Expected absolute host path after expansion: {path}"));
+        return Err(format!(
+            "Expected absolute host path after expansion: {path}"
+        ));
     }
     let relative = host_path
         .strip_prefix(Path::new("/"))

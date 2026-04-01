@@ -30,7 +30,9 @@ pub fn render_screen(
     let footer_rows = usize::from(show_footer);
     let content_height = height.saturating_sub(footer_rows);
     let provider = providers.get(current_provider);
-    let provider_name = provider.map(|provider| provider.config.name.as_str()).unwrap_or("none");
+    let provider_name = provider
+        .map(|provider| provider.config.name.as_str())
+        .unwrap_or("none");
     let provider_state = provider
         .map(|provider| format_provider_state(&provider.load_state))
         .unwrap_or_else(|| "missing".to_owned());
@@ -38,8 +40,8 @@ pub fn render_screen(
     let header_rows = content_height.min(3);
     let spacer_rows = usize::from(content_height > header_rows);
     let preview_header_rows = usize::from(content_height > header_rows + spacer_rows);
-    let max_preview_body = content_height
-        .saturating_sub(header_rows + spacer_rows + preview_header_rows);
+    let max_preview_body =
+        content_height.saturating_sub(header_rows + spacer_rows + preview_header_rows);
     let preview_body_height = if max_preview_body == 0 {
         0
     } else {
@@ -52,17 +54,24 @@ pub fn render_screen(
 
     let mut lines = Vec::with_capacity(content_height);
     lines.push(pad_right(
-        &format!("Provider: {} [{}]  Target: {}", provider_name, provider_state, target_label),
+        &format!(
+            "Provider: {} [{}]  Target: {}",
+            provider_name, provider_state, target_label
+        ),
         width,
     ));
     if content_height > 1 {
         lines.push(pad_right(&format!("> {}", query), width));
     }
     if content_height > 2 {
-        lines.push(pad_right(&match_count_line(provider, matches, width), width));
+        lines.push(pad_right(
+            &match_count_line(provider, matches, width),
+            width,
+        ));
     }
 
-    let rendered_matches = render_match_lines(provider, matches, selected_match, width, list_height);
+    let rendered_matches =
+        render_match_lines(provider, matches, selected_match, width, list_height);
     lines.extend(rendered_matches);
 
     if preview_body_height > 0 {
@@ -102,16 +111,18 @@ fn render_match_lines(
     match provider.map(|provider| &provider.load_state) {
         Some(ProviderLoadState::Loading) => {
             lines.push(pad_right("Loading entries...", width));
-        },
+        }
         Some(ProviderLoadState::Error(error)) => {
             lines.push(pad_right(&format!("Load error: {}", error), width));
-        },
+        }
         Some(ProviderLoadState::Ready(entries)) => {
             if matches.is_empty() {
                 lines.push(pad_right("No matches", width));
             } else {
                 let start = selected_match.saturating_sub(list_height / 2);
-                for (offset, match_result) in matches.iter().skip(start).take(list_height).enumerate() {
+                for (offset, match_result) in
+                    matches.iter().skip(start).take(list_height).enumerate()
+                {
                     let selected = start + offset == selected_match;
                     let text = entries
                         .get(match_result.entry_index)
@@ -124,10 +135,10 @@ fn render_match_lines(
                     lines.push(pad_right_ansi(&format!("{prefix}{styled}"), visible, width));
                 }
             }
-        },
+        }
         _ => {
             lines.push(pad_right("Waiting for provider...", width));
-        },
+        }
     }
 
     lines.truncate(list_height);
@@ -153,7 +164,10 @@ fn render_preview_lines(
         if let Some(match_result) = matches.get(selected_match) {
             if let Some(entry) = entries.get(match_result.entry_index) {
                 let preview = entry.preview.as_deref().unwrap_or(&entry.text);
-                for line in preview.lines().take(preview_height.saturating_sub(lines.len())) {
+                for line in preview
+                    .lines()
+                    .take(preview_height.saturating_sub(lines.len()))
+                {
                     let clipped = truncate_to_width(line, width.saturating_sub(2));
                     let styled = maybe_style_python(provider, &clipped, false);
                     let visible = 2 + visible_width(&clipped);
@@ -336,8 +350,8 @@ fn highlight_python(text: &str) -> String {
     let keywords = [
         "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
         "elif", "else", "except", "False", "finally", "for", "from", "global", "if", "import",
-        "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return",
-        "True", "try", "while", "with", "yield",
+        "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True",
+        "try", "while", "with", "yield",
     ];
 
     let mut rendered = String::new();
