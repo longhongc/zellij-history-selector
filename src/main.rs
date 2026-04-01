@@ -16,6 +16,9 @@ use provider::{
 };
 use zellij_tile::prelude::*;
 
+const PREFERRED_FLOATING_HEIGHT: &str = "84%";
+const PLUGIN_ID_HINT: &str = "zellij-history-selector";
+
 #[derive(Default)]
 struct State {
     app_config: Option<AppConfig>,
@@ -35,6 +38,8 @@ struct State {
     next_request_id: usize,
     initialized: bool,
     help_visible: bool,
+    self_pane: Option<PaneId>,
+    floating_height_adjusted: bool,
 }
 
 register_plugin!(State);
@@ -71,7 +76,7 @@ impl ZellijPlugin for State {
     }
 
     fn update(&mut self, event: Event) -> bool {
-        match event {
+        let should_render = match event {
             Event::PermissionRequestResult(status) => {
                 self.handle_permission_result(status);
                 true
@@ -108,7 +113,13 @@ impl ZellijPlugin for State {
             },
             Event::Key(key) => self.handle_key(key),
             _ => false,
+        };
+
+        if should_render {
+            self.maybe_resize_self_floating_pane();
         }
+
+        should_render
     }
 
     fn render(&mut self, rows: usize, cols: usize) {
@@ -151,6 +162,46 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    fn maybe_resize_self_floating_pane(&mut self) {
+        if self.floating_height_adjusted || !self.permission_granted {
+            return;
+        }
+
+        let Some(self_pane) = self.detect_self_pane() else {
+            return;
+        };
+        let Some(coordinates) = FloatingPaneCoordinates::new(
+            None,
+            None,
+            None,
+            Some(PREFERRED_FLOATING_HEIGHT.to_owned()),
+            None,
+            None,
+        ) else {
+            return;
+        };
+
+        change_floating_panes_coordinates(vec![(self_pane, coordinates)]);
+        self.self_pane = Some(self_pane);
+        self.floating_height_adjusted = true;
+    }
+
+    fn detect_self_pane(&self) -> Option<PaneId> {
+        if let Some(self_pane) = self.self_pane {
+            return Some(self_pane);
+        }
+
+        if let Ok((_tab_index, pane_id)) = get_focused_pane_info() {
+            if pane_id_is_plugin(pane_id) {
+                return Some(pane_id);
+            }
+        }
+
+        self.pane_manifest
+            .as_ref()
+            .and_then(preferred_plugin_from_manifest)
+    }
+
     fn request_permissions(&mut self) {
         let Some(app_config) = self.app_config.as_ref() else {
             return;
@@ -556,4 +607,31 @@ fn preferred_target_from_manifest(pane_manifest: &PaneManifest) -> Option<PaneId
                 PaneId::Terminal(pane_info.id)
             }
         })
+}
+
+fn preferred_plugin_from_manifest(pane_manifest: &PaneManifest) -> Option<PaneId> {
+    pane_manifest
+        .panes
+        .values()
+        .flatten()
+        .find(|pane_info| pane_info.is_focused && is_this_plugin_pane(pane_info))
+        .or_else(|| {
+            pane_manifest
+                .panes
+                .values()
+                .flatten()
+                .find(|pane_info| is_this_plugin_pane(pane_info))
+        })
+        .map(|pane_info| PaneId::Plugin(pane_info.id))
+}
+
+fn is_this_plugin_pane(pane_info: &PaneInfo) -> bool {
+    pane_info.is_plugin
+        && pane_info.is_selectable
+        && !pane_info.is_suppressed
+        && (pane_info.title.contains(PLUGIN_ID_HINT)
+            || pane_info
+                .plugin_url
+                .as_deref()
+                .is_some_and(|plugin_url| plugin_url.contains(PLUGIN_ID_HINT)))
 }
