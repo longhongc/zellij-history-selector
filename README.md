@@ -77,6 +77,13 @@ plugins {
     provider.custom.args "-m my_history_exporter"
     provider.custom.limit "5000"
     provider.custom.dedupe "true"
+
+    provider.copyq.type "command_json"
+    provider.copyq.name "CopyQ"
+    provider.copyq.command "/home/longhongc/project/zellij-history-selector/scripts/export_copyq_json.py"
+    provider.copyq.args "clipboard"
+    provider.copyq.limit "5000"
+    provider.copyq.dedupe "true"
   }
 }
 ```
@@ -98,6 +105,7 @@ If you launch the raw `file:/.../plugin.wasm` URL directly, Zellij will not appl
 - `file_lines`
 - `sqlite_query`
 - `command_lines`
+- `command_json`
 - `ipython`
 
 Legacy compatibility:
@@ -108,5 +116,6 @@ Legacy compatibility:
 
 - `file_lines` reads through Zellij's WASI host mount and needs filesystem permission.
 - `command_lines` and SQLite-backed providers use Zellij host command execution.
+- `command_json` expects one JSON object per output line with at least a `text` field, and supports multiline `text` / `preview` values.
 - `sqlite_query` and `ipython` currently use host `python3` for read-only SQLite access.
 - Do not use nested `provider { ... }` blocks with the current implementation.

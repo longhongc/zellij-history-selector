@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::model::{
-    CommandConfig, FileLinesConfig, HistoryEntry, IPythonConfig, ProviderConfig, ProviderKind,
-    SplitMode, SqliteQueryConfig,
+    CommandConfig, CommandOutputMode, FileLinesConfig, HistoryEntry, IPythonConfig, ProviderConfig,
+    ProviderKind, SqliteQueryConfig,
 };
 
 const MAX_STORED_ENTRY_BYTES: usize = 4 * 1024 * 1024;
@@ -42,6 +42,13 @@ pub struct CommandInvocation {
 #[derive(Debug, Deserialize)]
 struct SqliteRow {
     values: Vec<Option<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommandJsonRow {
+    text: Option<String>,
+    preview: Option<String>,
+    score_hint: Option<i64>,
 }
 
 pub fn provider_requires_full_hd(config: &ProviderConfig) -> bool {
@@ -174,8 +181,8 @@ fn parse_line_output(
 ) -> Result<Vec<HistoryEntry>, String> {
     let output = String::from_utf8(stdout.to_vec())
         .map_err(|error| format!("Provider '{}' returned invalid UTF-8: {error}", config.name))?;
-    let entries = match command_config.split_mode {
-        SplitMode::Lines => output
+    let entries = match command_config.output_mode {
+        CommandOutputMode::Lines => output
             .lines()
             .map(str::trim_end)
             .filter(|line| !line.trim().is_empty())
@@ -186,6 +193,7 @@ fn parse_line_output(
                 score_hint: (command_config.limit.saturating_sub(index)) as i64,
             })
             .collect::<Vec<_>>(),
+        CommandOutputMode::Json => parse_json_lines_output(config, command_config, &output)?,
     };
 
     Ok(finalize_entries(
@@ -195,11 +203,57 @@ fn parse_line_output(
     ))
 }
 
+fn parse_json_lines_output(
+    config: &ProviderConfig,
+    command_config: &CommandConfig,
+    output: &str,
+) -> Result<Vec<HistoryEntry>, String> {
+    let mut entries = Vec::new();
+
+    for (index, line) in output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+    {
+        let row: CommandJsonRow = serde_json::from_str(line).map_err(|error| {
+            format!(
+                "Provider '{}' returned invalid command_json rows: {error}",
+                config.name
+            )
+        })?;
+        let text = row.text.ok_or_else(|| {
+            format!(
+                "Provider '{}' returned a command_json row without `text`",
+                config.name
+            )
+        })?;
+        if text.trim().is_empty() {
+            continue;
+        }
+        let preview = row.preview.filter(|preview| preview != &text);
+        let score_hint = row
+            .score_hint
+            .unwrap_or((command_config.limit.saturating_sub(index)) as i64);
+
+        entries.push(HistoryEntry {
+            text,
+            preview,
+            score_hint,
+        });
+    }
+
+    Ok(entries)
+}
+
 fn build_sqlite_invocation(sqlite_config: &SqliteQueryConfig) -> Result<CommandInvocation, String> {
     let path = expand_host_path(&sqlite_config.path)?;
     let wasi_path = config_path_to_wasi(&sqlite_config.path)?;
-    let metadata = fs::metadata(&wasi_path)
-        .map_err(|error| format!("Failed to read SQLite database {}: {error}", sqlite_config.path))?;
+    let metadata = fs::metadata(&wasi_path).map_err(|error| {
+        format!(
+            "Failed to read SQLite database {}: {error}",
+            sqlite_config.path
+        )
+    })?;
     if !metadata.is_file() {
         return Err(format!(
             "SQLite database path is not a file: {}",
@@ -355,3 +409,57 @@ fn expand_host_path(path: &str) -> Result<PathBuf, String> {
 
 #[allow(dead_code)]
 fn _assert_send_sync_usage(_config: &FileLinesConfig) {}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_command_output;
+    use crate::model::{CommandConfig, CommandOutputMode, ProviderConfig, ProviderKind};
+    use std::collections::BTreeMap;
+
+    fn command_provider(output_mode: CommandOutputMode) -> ProviderConfig {
+        ProviderConfig {
+            name: "Test Command".to_owned(),
+            kind: ProviderKind::Command(CommandConfig {
+                command: "python3".to_owned(),
+                args: Vec::new(),
+                cwd: None,
+                env: BTreeMap::new(),
+                output_mode,
+                limit: 5000,
+                dedupe: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn parses_command_json_rows_into_multiline_entries() {
+        let config = command_provider(CommandOutputMode::Json);
+        let stdout = br#"{"text":"first line\nsecond line","preview":"full preview\nwith two lines","score_hint":42}
+{"text":"single line"}
+"#;
+
+        let entries = parse_command_output(&config, Some(0), stdout, b"")
+            .expect("command_json output should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].text, "first line\nsecond line");
+        assert_eq!(
+            entries[0].preview.as_deref(),
+            Some("full preview\nwith two lines")
+        );
+        assert_eq!(entries[0].score_hint, 42);
+        assert_eq!(entries[1].text, "single line");
+        assert!(entries[1].preview.is_none());
+    }
+
+    #[test]
+    fn errors_when_command_json_row_is_missing_text() {
+        let config = command_provider(CommandOutputMode::Json);
+        let stdout = br#"{"preview":"missing text"}"#;
+
+        let error = parse_command_output(&config, Some(0), stdout, b"")
+            .expect_err("row without text should fail");
+
+        assert!(error.contains("without `text`"));
+    }
+}

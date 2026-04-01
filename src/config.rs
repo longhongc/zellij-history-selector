@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    AppConfig, CommandConfig, DefaultMode, FileLinesConfig, IPythonConfig, ProviderConfig,
-    ProviderKind, SplitMode, SqliteQueryConfig,
+    AppConfig, CommandConfig, CommandOutputMode, DefaultMode, FileLinesConfig, IPythonConfig,
+    ProviderConfig, ProviderKind, SqliteQueryConfig,
 };
 
 pub fn parse_config(raw: BTreeMap<String, String>) -> Result<AppConfig, String> {
@@ -194,7 +194,16 @@ fn parse_provider_from_prefix(
             args: parse_args(raw.get(&format!("{prefix}args")))?,
             cwd: raw.get(&format!("{prefix}cwd")).cloned(),
             env: collect_env(raw, prefix),
-            split_mode: SplitMode::Lines,
+            output_mode: CommandOutputMode::Lines,
+            limit: parse_usize(raw.get(&format!("{prefix}limit")), 5000)?,
+            dedupe: parse_bool(raw.get(&format!("{prefix}dedupe")), false)?,
+        }),
+        "command_json" => ProviderKind::Command(CommandConfig {
+            command: required_string(raw, &format!("{prefix}command"))?,
+            args: parse_args(raw.get(&format!("{prefix}args")))?,
+            cwd: raw.get(&format!("{prefix}cwd")).cloned(),
+            env: collect_env(raw, prefix),
+            output_mode: CommandOutputMode::Json,
             limit: parse_usize(raw.get(&format!("{prefix}limit")), 5000)?,
             dedupe: parse_bool(raw.get(&format!("{prefix}dedupe")), false)?,
         }),
@@ -272,7 +281,7 @@ fn parse_args(value: Option<&String>) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::parse_config;
-    use crate::model::ProviderKind;
+    use crate::model::{CommandOutputMode, ProviderKind};
     use std::collections::BTreeMap;
 
     #[test]
@@ -372,6 +381,31 @@ mod tests {
             ProviderKind::Command(config) => {
                 assert_eq!(config.args, vec!["-m", "exporter"]);
                 assert_eq!(config.env.get("MODE"), Some(&"test".to_owned()));
+                assert!(matches!(config.output_mode, CommandOutputMode::Lines));
+            }
+            other => panic!("unexpected provider kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_command_json_provider_config() {
+        let raw = BTreeMap::from([
+            ("providers".to_owned(), "copyq".to_owned()),
+            ("provider.copyq.type".to_owned(), "command_json".to_owned()),
+            ("provider.copyq.name".to_owned(), "CopyQ".to_owned()),
+            ("provider.copyq.command".to_owned(), "python3".to_owned()),
+            (
+                "provider.copyq.args".to_owned(),
+                "/tmp/export_copyq_json.py".to_owned(),
+            ),
+            ("provider.copyq.limit".to_owned(), "100".to_owned()),
+        ]);
+
+        let parsed = parse_config(raw).expect("config should parse");
+        match &parsed.providers[0].kind {
+            ProviderKind::Command(config) => {
+                assert!(matches!(config.output_mode, CommandOutputMode::Json));
+                assert_eq!(config.limit, 100);
             }
             other => panic!("unexpected provider kind: {other:?}"),
         }

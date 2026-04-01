@@ -52,8 +52,9 @@ pub struct SqliteQueryConfig {
 }
 
 #[derive(Clone, Debug)]
-pub enum SplitMode {
+pub enum CommandOutputMode {
     Lines,
+    Json,
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +63,7 @@ pub struct CommandConfig {
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
-    pub split_mode: SplitMode,
+    pub output_mode: CommandOutputMode,
     pub limit: usize,
     pub dedupe: bool,
 }
