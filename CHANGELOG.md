@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- switched the README demo from embedded MP4 to a GIF that renders on GitHub
+
 ## 1.2.1
 
 - added the README demo video embed
