@@ -20,7 +20,7 @@ pub fn parse_config(raw: BTreeMap<String, String>) -> Result<AppConfig, String> 
         default_mode = DefaultMode::Execute;
     }
     let max_results = parse_usize(raw.get("max_results"), 500)?;
-    let preview_lines = parse_usize(raw.get("preview_lines"), 12)?;
+    let preview_lines = parse_usize(raw.get("preview_lines"), 10)?;
     let case_sensitive = parse_bool(raw.get("case_sensitive"), false)?;
     let providers = parse_providers(&raw)?;
 

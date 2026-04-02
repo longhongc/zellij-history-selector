@@ -57,7 +57,7 @@ plugins {
   zellij-history-selector location="file:~/.config/zellij/plugins/zellij-history-selector.wasm" {
     default_mode "insert"
     max_results "500"
-    preview_lines "12"
+    preview_lines "10"
     case_sensitive "false"
 
     providers "shell"
@@ -99,7 +99,7 @@ These top-level options control picker behavior:
   Current default: `500`
 - `preview_lines`
   Maximum number of preview lines reserved for the lower preview area.
-  Current default: `12`
+  Current default: `10`
 - `case_sensitive`
   When `true`, search matching becomes case-sensitive.
   Current default: `false`

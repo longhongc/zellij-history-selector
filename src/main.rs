@@ -150,7 +150,7 @@ impl ZellijPlugin for State {
             .app_config
             .as_ref()
             .map(|config| config.preview_lines)
-            .unwrap_or(12);
+            .unwrap_or(10);
         let show_footer = self.help_visible || status.is_some();
         let screen = ui::render_screen(
             rows,
