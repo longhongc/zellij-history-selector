@@ -7,3 +7,4 @@ __pycache__/
 /.sqlite-test/*.sqlite
 /AGENTS.md
 /BUILD_AND_CONFIG.md
+/scripts/generated/

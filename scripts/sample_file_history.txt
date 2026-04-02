@@ -1,0 +1,15 @@
+git status
+git add src/provider.rs README.md
+git commit -m "Wire up command_json provider"
+cargo check --target wasm32-wasip1
+cargo build --release --target wasm32-wasip1
+cargo test --target wasm32-wasip1 --no-run
+uv run ipython
+python3 -m http.server 8000
+sqlite3 scripts/generated/demo_history.sqlite ".tables"
+rg -n "provider" src README.md
+copyq tab clipboard count
+copyq eval -- "tab('clipboard'); print(size())"
+docker ps --format 'table {{.Names}}\t{{.Status}}'
+kubectl get pods -A
+journalctl -u my-service -n 50
