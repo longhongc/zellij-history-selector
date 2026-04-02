@@ -139,7 +139,7 @@ impl ZellijPlugin for State {
         let target_label = self
             .target_pane
             .as_ref()
-            .map(|pane_id| format!("{pane_id:?}"))
+            .map(|pane_id| self.describe_pane(*pane_id))
             .unwrap_or_else(|| "capturing...".to_owned());
         let status = if !self.permission_granted {
             Some("Approve the Zellij permission prompt for this plugin.")
@@ -564,6 +564,22 @@ impl State {
     fn hide_help(&mut self) {
         self.help_visible = false;
     }
+
+    fn describe_pane(&self, pane_id: PaneId) -> String {
+        if let Some(title) = self
+            .pane_manifest
+            .as_ref()
+            .and_then(|pane_manifest| pane_title_from_manifest(pane_manifest, pane_id))
+            .filter(|title| !title.trim().is_empty())
+        {
+            return title;
+        }
+
+        match pane_id {
+            PaneId::Terminal(id) => format!("terminal #{id}"),
+            PaneId::Plugin(id) => format!("plugin #{id}"),
+        }
+    }
 }
 
 enum LoadOutcome {
@@ -616,6 +632,18 @@ fn pane_id_number(pane_id: PaneId) -> u32 {
 
 fn pane_id_is_plugin(pane_id: PaneId) -> bool {
     matches!(pane_id, PaneId::Plugin(_))
+}
+
+fn pane_title_from_manifest(pane_manifest: &PaneManifest, pane_id: PaneId) -> Option<String> {
+    pane_manifest
+        .panes
+        .values()
+        .flatten()
+        .find(|pane_info| {
+            pane_info.id == pane_id_number(pane_id)
+                && pane_info.is_plugin == pane_id_is_plugin(pane_id)
+        })
+        .map(|pane_info| pane_info.title.clone())
 }
 
 fn preferred_target_from_manifest(pane_manifest: &PaneManifest) -> Option<PaneId> {
