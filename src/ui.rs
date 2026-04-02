@@ -76,7 +76,10 @@ pub fn render_screen(
 
     if preview_body_height > 0 {
         lines.push(" ".repeat(width));
-        lines.push(pad_right(&section_label("Preview", width), width));
+        lines.push(pad_right(
+            &section_label(preview_section_label(provider), width),
+            width,
+        ));
         lines.extend(render_preview_lines(
             provider,
             matches,
@@ -113,7 +116,12 @@ fn render_match_lines(
             lines.push(pad_right("Loading entries...", width));
         }
         Some(ProviderLoadState::Error(error)) => {
-            lines.push(pad_right(&format!("Load error: {}", error), width));
+            lines.extend(
+                wrap_plain_text(&format!("Load error: {}", error), width)
+                    .into_iter()
+                    .take(list_height)
+                    .map(|line| pad_right(&line, width)),
+            );
         }
         Some(ProviderLoadState::Ready(entries)) => {
             if matches.is_empty() {
@@ -156,24 +164,33 @@ fn render_preview_lines(
     preview_height: usize,
 ) -> Vec<String> {
     let mut lines = Vec::new();
-    if let Some(ProviderState {
-        load_state: ProviderLoadState::Ready(entries),
-        ..
-    }) = provider
-    {
-        if let Some(match_result) = matches.get(selected_match) {
-            if let Some(entry) = entries.get(match_result.entry_index) {
-                let preview = entry.preview.as_deref().unwrap_or(&entry.text);
-                for line in preview
-                    .lines()
-                    .take(preview_height.saturating_sub(lines.len()))
-                {
-                    let clipped = truncate_to_width(line, width.saturating_sub(2));
-                    let styled = maybe_style_entry(provider, &clipped, false);
-                    let visible = 2 + visible_width(&clipped);
-                    lines.push(pad_right_ansi(&format!("  {styled}"), visible, width));
+    if let Some(ProviderState { load_state, .. }) = provider {
+        match load_state {
+            ProviderLoadState::Ready(entries) => {
+                if let Some(match_result) = matches.get(selected_match) {
+                    if let Some(entry) = entries.get(match_result.entry_index) {
+                        let preview = entry.preview.as_deref().unwrap_or(&entry.text);
+                        for line in preview
+                            .lines()
+                            .take(preview_height.saturating_sub(lines.len()))
+                        {
+                            let clipped = truncate_to_width(line, width.saturating_sub(2));
+                            let styled = maybe_style_entry(provider, &clipped, false);
+                            let visible = 2 + visible_width(&clipped);
+                            lines.push(pad_right_ansi(&format!("  {styled}"), visible, width));
+                        }
+                    }
                 }
             }
+            ProviderLoadState::Error(error) => {
+                lines.extend(
+                    wrap_plain_text(error, width.saturating_sub(2))
+                        .into_iter()
+                        .take(preview_height)
+                        .map(|line| pad_right(&format!("  {line}"), width)),
+                );
+            }
+            _ => {}
         }
     }
     while lines.len() < preview_height {
@@ -244,10 +261,93 @@ fn visible_width(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
+fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+
+    let mut wrapped = Vec::new();
+    for paragraph in text.lines() {
+        if paragraph.trim().is_empty() {
+            if !wrapped.is_empty() {
+                wrapped.push(String::new());
+            }
+            continue;
+        }
+
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            let word_width = visible_width(word);
+            if current.is_empty() {
+                if word_width <= width {
+                    current.push_str(word);
+                } else {
+                    wrapped.extend(split_long_token(word, width));
+                }
+                continue;
+            }
+
+            let candidate_width = visible_width(&current) + 1 + word_width;
+            if candidate_width <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                wrapped.push(current);
+                if word_width <= width {
+                    current = word.to_owned();
+                } else {
+                    wrapped.extend(split_long_token(word, width));
+                    current = String::new();
+                }
+            }
+        }
+
+        if !current.is_empty() {
+            wrapped.push(current);
+        }
+    }
+
+    if wrapped.is_empty() {
+        wrapped.push(String::new());
+    }
+
+    wrapped
+}
+
+fn split_long_token(token: &str, width: usize) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for character in token.chars() {
+        let char_width = character.width().unwrap_or(0);
+        if current_width + char_width > width && !current.is_empty() {
+            parts.push(current);
+            current = String::new();
+            current_width = 0;
+        }
+        current.push(character);
+        current_width += char_width;
+    }
+
+    if !current.is_empty() {
+        parts.push(current);
+    }
+
+    parts
+}
+
 fn section_label(label: &str, width: usize) -> String {
     let content = format!("{} ", label);
     let remaining = width.saturating_sub(visible_width(&content));
     format!("{}{}", content, "─".repeat(remaining))
+}
+
+fn preview_section_label(provider: Option<&ProviderState>) -> &'static str {
+    match provider.map(|provider| &provider.load_state) {
+        Some(ProviderLoadState::Error(_)) => "Error",
+        _ => "Preview",
+    }
 }
 
 fn match_count_line(
