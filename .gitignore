@@ -1,3 +1,9 @@
 /target
 /.venv
 /.ipython-test
+/.codex
+__pycache__/
+*.py[cod]
+/.sqlite-test/*.sqlite
+/AGENTS.md
+/BUILD_AND_CONFIG.md
