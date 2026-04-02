@@ -42,6 +42,10 @@ Place the built or downloaded plugin at:
 ~/.config/zellij/plugins/zellij-history-selector.wasm
 ```
 
+If you do not want to build it yourself, download the `.wasm` release asset from:
+
+<https://github.com/longhongc/zellij-history-selector/releases/tag/v1.2.2>
+
 ## Minimal Zellij Setup
 
 Add a plugin alias and a keybind to `~/.config/zellij/config.kdl`.
