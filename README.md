@@ -10,7 +10,7 @@ It is built for practical workflows:
 - custom scripts that export lines or JSON
 
 <p align="center">
-  <video src="assets/demo.mp4" controls muted loop playsinline></video>
+  <img src="assets/demo.gif" alt="zellij-history-selector demo" />
 </p>
 
 ## What It Does
