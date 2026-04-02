@@ -45,7 +45,7 @@ Add a plugin alias and a keybind to `~/.config/zellij/config.kdl`.
 ```kdl
 keybinds {
   shared_except "locked" {
-    bind "Alt h" {
+    bind "Alt r" {
       LaunchOrFocusPlugin "zellij-history-selector" {
         floating true
       }
