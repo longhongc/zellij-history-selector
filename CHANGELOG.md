@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- added the README demo video embed
+
 ## 1.2.0
 
 - added direct support for Zsh `EXTENDED_HISTORY` files in `file_lines`
