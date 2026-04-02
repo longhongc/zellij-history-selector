@@ -1,6 +1,6 @@
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::model::{MatchResult, ProviderKind, ProviderLoadState, ProviderState};
+use crate::model::{CommandOutputMode, MatchResult, ProviderKind, ProviderLoadState, ProviderState};
 
 const ANSI_RESET: &str = "\x1b[0m";
 const ANSI_BOLD: &str = "\x1b[1m";
@@ -129,7 +129,7 @@ fn render_match_lines(
                         .map(|entry| first_line(&entry.text))
                         .unwrap_or("");
                     let clipped = truncate_to_width(text, width.saturating_sub(4));
-                    let styled = maybe_style_python(provider, &clipped, selected);
+                    let styled = maybe_style_entry(provider, &clipped, selected);
                     let prefix = if selected { "❯ " } else { "  " };
                     let visible = 2 + visible_width(&clipped);
                     lines.push(pad_right_ansi(&format!("{prefix}{styled}"), visible, width));
@@ -169,7 +169,7 @@ fn render_preview_lines(
                     .take(preview_height.saturating_sub(lines.len()))
                 {
                     let clipped = truncate_to_width(line, width.saturating_sub(2));
-                    let styled = maybe_style_python(provider, &clipped, false);
+                    let styled = maybe_style_entry(provider, &clipped, false);
                     let visible = 2 + visible_width(&clipped);
                     lines.push(pad_right_ansi(&format!("  {styled}"), visible, width));
                 }
@@ -265,11 +265,11 @@ fn match_count_line(
     format!("{prefix}{divider}")
 }
 
-fn maybe_style_python(provider: Option<&ProviderState>, text: &str, selected: bool) -> String {
-    let styled = if provider_looks_python(provider) {
-        highlight_python(text)
-    } else {
-        text.to_owned()
+fn maybe_style_entry(provider: Option<&ProviderState>, text: &str, selected: bool) -> String {
+    let styled = match syntax_flavor(provider) {
+        SyntaxFlavor::Python => highlight_python(text),
+        SyntaxFlavor::Shell => highlight_shell(text),
+        SyntaxFlavor::Plain => text.to_owned(),
     };
     if selected {
         format!("{ANSI_BOLD}{styled}{ANSI_RESET}")
@@ -339,11 +339,23 @@ fn styled_segment(text: &'static str, style: &'static str) -> FooterSegment {
     }
 }
 
-fn provider_looks_python(provider: Option<&ProviderState>) -> bool {
-    matches!(
-        provider.map(|provider| &provider.config.kind),
-        Some(ProviderKind::IPython(_))
-    )
+enum SyntaxFlavor {
+    Plain,
+    Python,
+    Shell,
+}
+
+fn syntax_flavor(provider: Option<&ProviderState>) -> SyntaxFlavor {
+    match provider.map(|provider| &provider.config.kind) {
+        Some(ProviderKind::IPython(_)) => SyntaxFlavor::Python,
+        Some(ProviderKind::FileLines(_)) => SyntaxFlavor::Shell,
+        Some(ProviderKind::Command(config))
+            if matches!(config.output_mode, CommandOutputMode::Lines) =>
+        {
+            SyntaxFlavor::Shell
+        }
+        _ => SyntaxFlavor::Plain,
+    }
 }
 
 fn highlight_python(text: &str) -> String {
@@ -430,4 +442,159 @@ fn highlight_python(text: &str) -> String {
         }
     }
     rendered
+}
+
+fn highlight_shell(text: &str) -> String {
+    let mut rendered = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0usize;
+    let mut expect_command = true;
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        if c.is_whitespace() {
+            rendered.push(c);
+            i += 1;
+            continue;
+        }
+
+        if c == '#' && (i == 0 || chars[i - 1].is_whitespace()) {
+            let rest: String = chars[i..].iter().collect();
+            rendered.push_str(ANSI_BRIGHT_BLACK);
+            rendered.push_str(ANSI_ITALIC);
+            rendered.push_str(&rest);
+            rendered.push_str(ANSI_RESET);
+            break;
+        }
+
+        if c == '\'' || c == '"' {
+            let quote = c;
+            let start = i;
+            i += 1;
+            while i < chars.len() {
+                if chars[i] == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            let token: String = chars[start..i.min(chars.len())].iter().collect();
+            rendered.push_str(ANSI_GREEN);
+            rendered.push_str(&token);
+            rendered.push_str(ANSI_RESET);
+            expect_command = false;
+            continue;
+        }
+
+        if c == '$' {
+            let start = i;
+            i += 1;
+            if i < chars.len() && chars[i] == '{' {
+                i += 1;
+                while i < chars.len() && chars[i] != '}' {
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1;
+                }
+            } else {
+                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                    i += 1;
+                }
+            }
+            let token: String = chars[start..i].iter().collect();
+            rendered.push_str(ANSI_CYAN);
+            rendered.push_str(&token);
+            rendered.push_str(ANSI_RESET);
+            expect_command = false;
+            continue;
+        }
+
+        if c.is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            rendered.push_str(ANSI_CYAN);
+            rendered.push_str(&token);
+            rendered.push_str(ANSI_RESET);
+            expect_command = false;
+            continue;
+        }
+
+        if matches!(c, '|' | '&' | ';' | '<' | '>') {
+            let start = i;
+            i += 1;
+            while i < chars.len() && matches!(chars[i], '|' | '&' | '<' | '>') {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            rendered.push_str(ANSI_YELLOW);
+            rendered.push_str(&token);
+            rendered.push_str(ANSI_RESET);
+            expect_command = true;
+            continue;
+        }
+
+        if is_shell_word_start(c) {
+            let start = i;
+            i += 1;
+            while i < chars.len() && is_shell_word_char(chars[i]) {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+
+            if i < chars.len()
+                && chars[i] == '='
+                && is_env_assignment_name(&token)
+                && expect_command
+            {
+                rendered.push_str(ANSI_CYAN);
+                rendered.push_str(&token);
+                rendered.push_str(ANSI_RESET);
+                rendered.push('=');
+                i += 1;
+                continue;
+            }
+
+            if expect_command && !token.starts_with('-') {
+                rendered.push_str(ANSI_BLUE);
+                rendered.push_str(ANSI_BOLD);
+                rendered.push_str(&token);
+                rendered.push_str(ANSI_RESET);
+            } else {
+                rendered.push_str(&token);
+            }
+            expect_command = false;
+            continue;
+        }
+
+        rendered.push(c);
+        i += 1;
+    }
+
+    rendered
+}
+
+fn is_shell_word_start(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '/' | '~' | '-')
+}
+
+fn is_shell_word_char(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(character, '_' | '.' | '/' | ':' | '~' | '-' | '+' | '%')
+}
+
+fn is_env_assignment_name(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_')
 }
