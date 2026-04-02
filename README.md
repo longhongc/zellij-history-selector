@@ -56,7 +56,6 @@ keybinds {
 plugins {
   zellij-history-selector location="file:~/.config/zellij/plugins/zellij-history-selector.wasm" {
     default_mode "insert"
-    execute_on_select "false"
     max_results "500"
     preview_lines "12"
     case_sensitive "false"
@@ -89,16 +88,12 @@ Provider config uses a simple namespaced shape:
 These top-level options control picker behavior:
 
 - `default_mode`
-  Default insert behavior when selecting an entry.
+  Default action when selecting an entry.
   Supported values:
   - `insert`: insert the selected text into the target pane
   - `execute`: insert the selected text and execute it
-  - `append`: currently behaves the same as `insert`
+  - `copy`: copy the selected text to the clipboard without inserting it
   Current default: `insert`
-- `execute_on_select`
-  When `true`, execute the selected entry immediately after inserting it.
-  This effectively makes selection behave like `default_mode "execute"`.
-  Current default: `false`
 - `max_results`
   Maximum number of filtered matches shown in the picker.
   Current default: `500`
@@ -220,6 +215,12 @@ provider.copyq.command "/absolute/path/to/export_copyq_json.py"
 provider.copyq.args "clipboard"
 provider.copyq.limit "5000"
 provider.copyq.dedupe "true"
+```
+
+If you want a clipboard-only picker, set:
+
+```kdl
+default_mode "copy"
 ```
 
 Directly through `copyq eval`:

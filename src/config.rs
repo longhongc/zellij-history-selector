@@ -6,17 +6,19 @@ use crate::model::{
 };
 
 pub fn parse_config(raw: BTreeMap<String, String>) -> Result<AppConfig, String> {
-    let default_mode = match raw
+    let mut default_mode = match raw
         .get("default_mode")
         .map(|value| value.trim().to_ascii_lowercase())
         .as_deref()
     {
         Some("execute") => DefaultMode::Execute,
-        Some("append") => DefaultMode::Append,
+        Some("copy") => DefaultMode::Copy,
         _ => DefaultMode::Insert,
     };
 
-    let execute_on_select = parse_bool(raw.get("execute_on_select"), false)?;
+    if parse_bool(raw.get("execute_on_select"), false)? {
+        default_mode = DefaultMode::Execute;
+    }
     let max_results = parse_usize(raw.get("max_results"), 500)?;
     let preview_lines = parse_usize(raw.get("preview_lines"), 12)?;
     let case_sensitive = parse_bool(raw.get("case_sensitive"), false)?;
@@ -24,7 +26,6 @@ pub fn parse_config(raw: BTreeMap<String, String>) -> Result<AppConfig, String> 
 
     Ok(AppConfig {
         default_mode,
-        execute_on_select,
         max_results,
         preview_lines,
         case_sensitive,
@@ -281,7 +282,7 @@ fn parse_args(value: Option<&String>) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::parse_config;
-    use crate::model::{CommandOutputMode, ProviderKind};
+    use crate::model::{CommandOutputMode, DefaultMode, ProviderKind};
     use std::collections::BTreeMap;
 
     #[test]
@@ -409,5 +410,31 @@ mod tests {
             }
             other => panic!("unexpected provider kind: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_copy_default_mode() {
+        let raw = BTreeMap::from([
+            ("default_mode".to_owned(), "copy".to_owned()),
+            ("providers".to_owned(), "shell".to_owned()),
+            ("provider.shell.type".to_owned(), "file_lines".to_owned()),
+            ("provider.shell.path".to_owned(), "~/.bash_history".to_owned()),
+        ]);
+
+        let parsed = parse_config(raw).expect("config should parse");
+        assert!(matches!(parsed.default_mode, DefaultMode::Copy));
+    }
+
+    #[test]
+    fn execute_on_select_maps_to_execute_mode_for_compatibility() {
+        let raw = BTreeMap::from([
+            ("execute_on_select".to_owned(), "true".to_owned()),
+            ("providers".to_owned(), "shell".to_owned()),
+            ("provider.shell.type".to_owned(), "file_lines".to_owned()),
+            ("provider.shell.path".to_owned(), "~/.bash_history".to_owned()),
+        ]);
+
+        let parsed = parse_config(raw).expect("config should parse");
+        assert!(matches!(parsed.default_mode, DefaultMode::Execute));
     }
 }

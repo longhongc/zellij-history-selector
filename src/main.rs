@@ -50,6 +50,7 @@ impl ZellijPlugin for State {
             EventType::Key,
             EventType::ListClients,
             EventType::PaneUpdate,
+            EventType::SystemClipboardFailure,
             EventType::PermissionRequestResult,
             EventType::RunCommandResult,
             EventType::HostFolderChanged,
@@ -104,6 +105,13 @@ impl ZellijPlugin for State {
             Event::FailedToChangeHostFolder(error) => {
                 self.status_message = Some(
                     error.unwrap_or_else(|| "Failed to mount /host at filesystem root".to_owned()),
+                );
+                true
+            }
+            Event::SystemClipboardFailure => {
+                self.status_message = Some(
+                    "Failed to copy to clipboard. Check your Zellij clipboard configuration."
+                        .to_owned(),
                 );
                 true
             }
@@ -212,6 +220,9 @@ impl State {
             PermissionType::ChangeApplicationState,
             PermissionType::WriteToStdin,
         ]);
+        if matches!(app_config.default_mode, DefaultMode::Copy) {
+            permissions.insert(PermissionType::WriteToClipboard);
+        }
         if app_config
             .providers
             .iter()
@@ -496,6 +507,25 @@ impl State {
         let Some(app_config) = self.app_config.as_ref() else {
             return;
         };
+        let Some(provider_state) = self.providers.get(self.current_provider) else {
+            return;
+        };
+        let ProviderLoadState::Ready(entries) = &provider_state.load_state else {
+            return;
+        };
+        let Some(match_result) = self.filtered.get(self.selected_match) else {
+            return;
+        };
+        let Some(entry) = entries.get(match_result.entry_index) else {
+            return;
+        };
+
+        if matches!(app_config.default_mode, DefaultMode::Copy) {
+            copy_to_clipboard(entry.text.clone());
+            close_self();
+            return;
+        }
+
         let Some(target_pane) = self.target_pane.or_else(|| {
             self.pane_manifest
                 .as_ref()
@@ -512,21 +542,9 @@ impl State {
             );
             return;
         }
-        let Some(provider_state) = self.providers.get(self.current_provider) else {
-            return;
-        };
-        let ProviderLoadState::Ready(entries) = &provider_state.load_state else {
-            return;
-        };
-        let Some(match_result) = self.filtered.get(self.selected_match) else {
-            return;
-        };
-        let Some(entry) = entries.get(match_result.entry_index) else {
-            return;
-        };
 
         let mut text = entry.text.clone();
-        if should_execute(app_config) {
+        if matches!(app_config.default_mode, DefaultMode::Execute) {
             text.push('\n');
         }
         write_chars_to_pane_id(&text, target_pane);
@@ -583,10 +601,6 @@ fn load_current_provider(
             Err(error) => LoadOutcome::Error(error),
         },
     }
-}
-
-fn should_execute(app_config: &AppConfig) -> bool {
-    app_config.execute_on_select || matches!(app_config.default_mode, DefaultMode::Execute)
 }
 
 fn is_ctrl_char(key: &KeyWithModifier, character: char) -> bool {

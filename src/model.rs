@@ -4,13 +4,12 @@ use std::collections::BTreeMap;
 pub enum DefaultMode {
     Insert,
     Execute,
-    Append,
+    Copy,
 }
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub default_mode: DefaultMode,
-    pub execute_on_select: bool,
     pub max_results: usize,
     pub preview_lines: usize,
     pub case_sensitive: bool,
