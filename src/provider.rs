@@ -72,13 +72,14 @@ pub fn load_file_provider(config: &ProviderConfig) -> Result<Vec<HistoryEntry>, 
     };
 
     let path = config_path_to_wasi(&file_config.path)?;
-    let contents = fs::read_to_string(&path)
+    let contents = fs::read(&path)
         .map_err(|error| format!("Failed to read {}: {error}", file_config.path))?;
+    let contents = String::from_utf8_lossy(&contents);
     let mut lines = contents
         .lines()
         .map(str::trim_end)
+        .map(normalize_file_history_line)
         .filter(|line| !line.trim().is_empty())
-        .map(str::to_owned)
         .collect::<Vec<_>>();
 
     if file_config.reverse {
@@ -373,6 +374,25 @@ fn finalize_entries(
     entries
 }
 
+fn normalize_file_history_line(line: &str) -> String {
+    parse_zsh_extended_history_line(line)
+        .unwrap_or(line)
+        .to_owned()
+}
+
+fn parse_zsh_extended_history_line(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix(": ")?;
+    let (timestamp, rest) = rest.split_once(':')?;
+    if timestamp.is_empty() || !timestamp.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    let (duration, command) = rest.split_once(';')?;
+    if duration.is_empty() || !duration.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    Some(command)
+}
+
 fn config_path_to_wasi(path: &str) -> Result<PathBuf, String> {
     let host_path = expand_host_path(path)?;
     if !host_path.is_absolute() {
@@ -412,7 +432,7 @@ fn _assert_send_sync_usage(_config: &FileLinesConfig) {}
 
 #[cfg(test)]
 mod tests {
-    use super::parse_command_output;
+    use super::{parse_command_output, parse_zsh_extended_history_line};
     use crate::model::{CommandConfig, CommandOutputMode, ProviderConfig, ProviderKind};
     use std::collections::BTreeMap;
 
@@ -461,5 +481,19 @@ mod tests {
             .expect_err("row without text should fail");
 
         assert!(error.contains("without `text`"));
+    }
+
+    #[test]
+    fn strips_zsh_extended_history_prefix() {
+        let command = parse_zsh_extended_history_line(": 1747921592:0;git status")
+            .expect("should parse zsh extended history");
+        assert_eq!(command, "git status");
+    }
+
+    #[test]
+    fn ignores_non_zsh_history_lines() {
+        assert!(parse_zsh_extended_history_line("git status").is_none());
+        assert!(parse_zsh_extended_history_line(": not-a-timestamp:0;git status").is_none());
+        assert!(parse_zsh_extended_history_line(": 1747921592:not-a-duration;git status").is_none());
     }
 }

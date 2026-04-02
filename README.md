@@ -161,16 +161,24 @@ Example:
 
 ### Shell History
 
+This recipe is intended for Bash and Zsh history files:
+- Bash: `~/.bash_history`
+- Zsh: `~/.zsh_history`
+
 ```kdl
 providers "shell"
 
 provider.shell.type "file_lines"
-provider.shell.name "Bash"
-provider.shell.path "~/.bash_history"
+provider.shell.name "Shell"
+provider.shell.path "~/.zsh_history"
 provider.shell.reverse "true"
 provider.shell.dedupe "true"
 provider.shell.limit "5000"
 ```
+
+For Zsh with `EXTENDED_HISTORY`, the plugin strips the leading `: <epoch>:<duration>;` metadata automatically.
+
+Other shells may use different history formats. If the file is not really one-command-per-line, use a custom exporter with `command_lines` or `command_json` instead of copying this recipe unchanged.
 
 ### IPython History
 
