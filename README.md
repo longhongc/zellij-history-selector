@@ -32,6 +32,12 @@ Artifact:
 target/wasm32-wasip1/release/zellij-history-selector.wasm
 ```
 
+Place the built or downloaded plugin at:
+
+```text
+~/.config/zellij/plugins/zellij-history-selector.wasm
+```
+
 ## Minimal Zellij Setup
 
 Add a plugin alias and a keybind to `~/.config/zellij/config.kdl`.
@@ -48,7 +54,7 @@ keybinds {
 }
 
 plugins {
-  zellij-history-selector location="file:/absolute/path/to/zellij-history-selector.wasm" {
+  zellij-history-selector location="file:~/.config/zellij/plugins/zellij-history-selector.wasm" {
     default_mode "insert"
     execute_on_select "false"
     max_results "500"
@@ -70,30 +76,65 @@ plugins {
 Important:
 - launch the plugin by alias name: `LaunchOrFocusPlugin "zellij-history-selector"`
 - do not launch the raw `file:/.../plugin.wasm` path if you want the `plugins { ... }` config block to apply
+- build the `.wasm` yourself or download it, then place it at `~/.config/zellij/plugins/zellij-history-selector.wasm`
 
-## Config Model
+Provider config uses a simple namespaced shape:
+- `providers "shell,ipython,copyq"`
+- `provider.shell.type "file_lines"`
+- `provider.ipython.type "ipython"`
+- `provider.copyq.type "command_json"`
 
-Zellij `0.44.x` passes plugin config as a flat key/value map, so this plugin uses:
-- a `providers` order list
-- flat namespaced keys like `provider.shell.type`
+## Plugin Options
 
-Recommended shape:
+These top-level options control picker behavior:
+
+- `default_mode`
+  Default insert behavior when selecting an entry.
+  Supported values:
+  - `insert`: insert the selected text into the target pane
+  - `execute`: insert the selected text and execute it
+  - `append`: currently behaves the same as `insert`
+  Current default: `insert`
+- `execute_on_select`
+  When `true`, execute the selected entry immediately after inserting it.
+  This effectively makes selection behave like `default_mode "execute"`.
+  Current default: `false`
+- `max_results`
+  Maximum number of filtered matches shown in the picker.
+  Current default: `500`
+- `preview_lines`
+  Maximum number of preview lines reserved for the lower preview area.
+  Current default: `12`
+- `case_sensitive`
+  When `true`, search matching becomes case-sensitive.
+  Current default: `false`
+
+## Multiple Providers
+
+You can combine multiple providers in one picker by listing them in `providers` and then configuring each one under its own `provider.<id>.*` namespace.
 
 ```kdl
-providers "ipython,shell,copyq"
-
-provider.ipython.type "ipython"
-provider.ipython.path "~/.ipython/profile_default/history.sqlite"
+providers "shell,ipython,copyq"
 
 provider.shell.type "file_lines"
+provider.shell.name "Shell"
 provider.shell.path "~/.bash_history"
+provider.shell.reverse "true"
+provider.shell.dedupe "true"
+
+provider.ipython.type "ipython"
+provider.ipython.name "IPython"
+provider.ipython.path "~/.ipython/profile_default/history.sqlite"
+provider.ipython.dedupe "true"
 
 provider.copyq.type "command_json"
+provider.copyq.name "CopyQ"
 provider.copyq.command "~/.config/zellij/plugins/zellij-history-selector/scripts/export_copyq_json.py"
 provider.copyq.args "clipboard"
+provider.copyq.dedupe "true"
 ```
 
-Legacy numbered keys such as `provider_1_type` still work, but the namespaced form is the recommended one.
+The order in `providers` is the order used in the UI when switching between sources.
 
 ## Provider Types
 
