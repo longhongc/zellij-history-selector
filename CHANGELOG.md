@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+- added direct support for Zsh `EXTENDED_HISTORY` files in `file_lines`
+- decode shell history files with UTF-8 lossily so invalid bytes do not break loading
+- wrap provider load errors instead of truncating them to a single line
+- clarified the shell history docs to explicitly target Bash and Zsh
+
 ## 1.1.0
 
 - simplified selection behavior around `default_mode`
