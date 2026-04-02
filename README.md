@@ -9,6 +9,10 @@ It is built for practical workflows:
 - clipboard managers such as [CopyQ](https://github.com/hluk/CopyQ)
 - custom scripts that export lines or JSON
 
+<p align="center">
+  <video src="assets/demo.mp4" controls muted loop playsinline></video>
+</p>
+
 ## What It Does
 
 - opens in a floating pane
