@@ -227,7 +227,7 @@ providers "copyq"
 
 provider.copyq.type "command_json"
 provider.copyq.name "CopyQ"
-provider.copyq.command "/absolute/path/to/export_copyq_json.py"
+provider.copyq.command "~/.config/zellij/plugins/zellij-history-selector/scripts/export_copyq_json.py"
 provider.copyq.args "clipboard"
 provider.copyq.limit "5000"
 provider.copyq.dedupe "true"

@@ -106,7 +106,7 @@ pub fn load_file_provider(config: &ProviderConfig) -> Result<Vec<HistoryEntry>, 
 pub fn build_command_invocation(config: &ProviderConfig) -> Result<CommandInvocation, String> {
     match &config.kind {
         ProviderKind::Command(command_config) => Ok(CommandInvocation {
-            argv: std::iter::once(command_config.command.clone())
+            argv: std::iter::once(resolve_command_executable(&command_config.command)?)
                 .chain(command_config.args.iter().cloned())
                 .collect(),
             cwd: command_config
@@ -427,12 +427,30 @@ fn expand_host_path(path: &str) -> Result<PathBuf, String> {
     Ok(base.join(candidate))
 }
 
+fn resolve_command_executable(command: &str) -> Result<String, String> {
+    if looks_like_filesystem_path(command) {
+        return Ok(expand_host_path(command)?.to_string_lossy().to_string());
+    }
+    Ok(command.to_owned())
+}
+
+fn looks_like_filesystem_path(command: &str) -> bool {
+    command == "~"
+        || command.starts_with("~/")
+        || command.starts_with('/')
+        || command.starts_with("./")
+        || command.starts_with("../")
+        || command.contains('/')
+}
+
 #[allow(dead_code)]
 fn _assert_send_sync_usage(_config: &FileLinesConfig) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_command_output, parse_zsh_extended_history_line};
+    use super::{
+        build_command_invocation, parse_command_output, parse_zsh_extended_history_line,
+    };
     use crate::model::{CommandConfig, CommandOutputMode, ProviderConfig, ProviderKind};
     use std::collections::BTreeMap;
 
@@ -495,5 +513,32 @@ mod tests {
         assert!(parse_zsh_extended_history_line("git status").is_none());
         assert!(parse_zsh_extended_history_line(": not-a-timestamp:0;git status").is_none());
         assert!(parse_zsh_extended_history_line(": 1747921592:not-a-duration;git status").is_none());
+    }
+
+    #[test]
+    fn expands_tilde_in_command_provider_executable_path() {
+        let home = std::env::var("HOME").expect("HOME should be set for tests");
+        let config = ProviderConfig {
+            name: "CopyQ".to_owned(),
+            kind: ProviderKind::Command(CommandConfig {
+                command: "~/.config/zellij/plugins/zellij-history-selector/export_copyq_json.py"
+                    .to_owned(),
+                args: vec!["clipboard".to_owned()],
+                cwd: None,
+                env: BTreeMap::new(),
+                output_mode: CommandOutputMode::Json,
+                limit: 500,
+                dedupe: true,
+            }),
+        };
+
+        let invocation = build_command_invocation(&config).expect("invocation should build");
+        assert_eq!(
+            invocation.argv[0],
+            format!(
+                "{home}/.config/zellij/plugins/zellij-history-selector/export_copyq_json.py"
+            )
+        );
+        assert_eq!(invocation.argv[1], "clipboard");
     }
 }
