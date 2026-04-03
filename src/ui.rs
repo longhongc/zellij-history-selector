@@ -1,6 +1,8 @@
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::model::{CommandOutputMode, MatchResult, ProviderKind, ProviderLoadState, ProviderState};
+use crate::model::{
+    CommandOutputMode, MatchResult, ProviderKind, ProviderLoadState, ProviderState,
+};
 
 const ANSI_RESET: &str = "\x1b[0m";
 const ANSI_BOLD: &str = "\x1b[1m";
@@ -694,7 +696,7 @@ fn is_shell_word_char(character: char) -> bool {
 
 fn is_env_assignment_name(token: &str) -> bool {
     !token.is_empty()
-        && token
-            .chars()
-            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_')
+        && token.chars().all(|character| {
+            character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+        })
 }

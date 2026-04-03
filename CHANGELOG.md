@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- expand `~` in `provider.<id>.command` so helper scripts can be referenced with home-relative paths
+- cap bundled CopyQ helper output by item count and item length to avoid oversized `command_json` payloads
+
 ## 1.2.2
 
 - switched the README demo from embedded MP4 to a GIF that renders on GitHub

@@ -217,7 +217,7 @@ fn parse_provider_from_prefix(
         other => {
             return Err(format!(
                 "Unsupported provider type '{other}' in {provider_ref}.type"
-            ))
+            ));
         }
     };
 
@@ -418,7 +418,10 @@ mod tests {
             ("default_mode".to_owned(), "copy".to_owned()),
             ("providers".to_owned(), "shell".to_owned()),
             ("provider.shell.type".to_owned(), "file_lines".to_owned()),
-            ("provider.shell.path".to_owned(), "~/.bash_history".to_owned()),
+            (
+                "provider.shell.path".to_owned(),
+                "~/.bash_history".to_owned(),
+            ),
         ]);
 
         let parsed = parse_config(raw).expect("config should parse");
@@ -431,7 +434,10 @@ mod tests {
             ("execute_on_select".to_owned(), "true".to_owned()),
             ("providers".to_owned(), "shell".to_owned()),
             ("provider.shell.type".to_owned(), "file_lines".to_owned()),
-            ("provider.shell.path".to_owned(), "~/.bash_history".to_owned()),
+            (
+                "provider.shell.path".to_owned(),
+                "~/.bash_history".to_owned(),
+            ),
         ]);
 
         let parsed = parse_config(raw).expect("config should parse");

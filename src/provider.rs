@@ -72,8 +72,8 @@ pub fn load_file_provider(config: &ProviderConfig) -> Result<Vec<HistoryEntry>, 
     };
 
     let path = config_path_to_wasi(&file_config.path)?;
-    let contents = fs::read(&path)
-        .map_err(|error| format!("Failed to read {}: {error}", file_config.path))?;
+    let contents =
+        fs::read(&path).map_err(|error| format!("Failed to read {}: {error}", file_config.path))?;
     let contents = String::from_utf8_lossy(&contents);
     let mut lines = contents
         .lines()
@@ -383,7 +383,11 @@ fn normalize_file_history_line(line: &str) -> String {
 fn parse_zsh_extended_history_line(line: &str) -> Option<&str> {
     let rest = line.strip_prefix(": ")?;
     let (timestamp, rest) = rest.split_once(':')?;
-    if timestamp.is_empty() || !timestamp.chars().all(|character| character.is_ascii_digit()) {
+    if timestamp.is_empty()
+        || !timestamp
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
         return None;
     }
     let (duration, command) = rest.split_once(';')?;
@@ -448,9 +452,7 @@ fn _assert_send_sync_usage(_config: &FileLinesConfig) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_command_invocation, parse_command_output, parse_zsh_extended_history_line,
-    };
+    use super::{build_command_invocation, parse_command_output, parse_zsh_extended_history_line};
     use crate::model::{CommandConfig, CommandOutputMode, ProviderConfig, ProviderKind};
     use std::collections::BTreeMap;
 
@@ -512,7 +514,9 @@ mod tests {
     fn ignores_non_zsh_history_lines() {
         assert!(parse_zsh_extended_history_line("git status").is_none());
         assert!(parse_zsh_extended_history_line(": not-a-timestamp:0;git status").is_none());
-        assert!(parse_zsh_extended_history_line(": 1747921592:not-a-duration;git status").is_none());
+        assert!(
+            parse_zsh_extended_history_line(": 1747921592:not-a-duration;git status").is_none()
+        );
     }
 
     #[test]
@@ -535,9 +539,7 @@ mod tests {
         let invocation = build_command_invocation(&config).expect("invocation should build");
         assert_eq!(
             invocation.argv[0],
-            format!(
-                "{home}/.config/zellij/plugins/zellij-history-selector/export_copyq_json.py"
-            )
+            format!("{home}/.config/zellij/plugins/zellij-history-selector/export_copyq_json.py")
         );
         assert_eq!(invocation.argv[1], "clipboard");
     }

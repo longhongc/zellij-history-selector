@@ -11,8 +11,8 @@ use config::parse_config;
 use fuzzy::filter_entries;
 use model::{AppConfig, DefaultMode, MatchResult, ProviderLoadState, ProviderState};
 use provider::{
-    build_command_invocation, load_file_provider, parse_command_output, provider_requires_full_hd,
-    provider_requires_run_commands, CommandInvocation,
+    CommandInvocation, build_command_invocation, load_file_provider, parse_command_output,
+    provider_requires_full_hd, provider_requires_run_commands,
 };
 use zellij_tile::prelude::*;
 
