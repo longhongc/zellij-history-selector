@@ -138,6 +138,12 @@ Exports CopyQ items as JSON lines so multiline clipboard entries stay grouped an
 
 Use this as the recommended CopyQ integration.
 
+The helper applies exporter-side safety limits by default:
+- `--max-items 500`
+- `--max-chars 20000`
+
+This is intentional. `provider.limit` is applied after command output reaches the plugin, so a few very large clipboard items can otherwise trigger `growth operation limited` before the provider limit is enforced.
+
 Config:
 
 ```kdl
@@ -149,6 +155,12 @@ provider.copyq.command "/absolute/path/to/zellij-history-selector/scripts/export
 provider.copyq.args "clipboard"
 provider.copyq.limit "5000"
 provider.copyq.dedupe "true"
+```
+
+Optional tighter limits:
+
+```kdl
+provider.copyq.args "clipboard --max-items 200 --max-chars 8000"
 ```
 
 ## Quick Start

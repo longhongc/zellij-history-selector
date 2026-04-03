@@ -220,6 +220,12 @@ provider.sqlite.dedupe "true"
 
 [CopyQ](https://github.com/hluk/CopyQ) works best through `command_json`, so multiline clipboard items stay grouped and render correctly in preview.
 
+The bundled helper applies exporter-side limits before data reaches the plugin runtime:
+- defaults to exporting at most 500 items
+- truncates oversized items to avoid plugin crashes from huge clipboard payloads
+
+This matters because `provider.limit` is applied after command output reaches the plugin, so it does not protect against a few very large clipboard entries.
+
 With helper script:
 
 ```kdl
@@ -231,6 +237,12 @@ provider.copyq.command "~/.config/zellij/plugins/zellij-history-selector/scripts
 provider.copyq.args "clipboard"
 provider.copyq.limit "5000"
 provider.copyq.dedupe "true"
+```
+
+Optional tighter helper limits:
+
+```kdl
+provider.copyq.args "clipboard --max-items 200 --max-chars 8000"
 ```
 
 If you want a clipboard-only picker, set:
@@ -251,6 +263,8 @@ provider.copyq.args "eval -- \"tab('clipboard'); for (var i = size(); i > 0; --i
 provider.copyq.limit "5000"
 provider.copyq.dedupe "true"
 ```
+
+The direct `copyq eval` form is more compact, but the helper script is safer for real-world clipboard histories because it can cap exported rows and item size before the plugin sees the payload.
 
 ## Custom Integrations
 
