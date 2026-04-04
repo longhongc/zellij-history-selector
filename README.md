@@ -56,6 +56,7 @@ keybinds {
     bind "Alt r" {
       LaunchOrFocusPlugin "zellij-history-selector" {
         floating true
+        move_to_focused_tab true
       }
     }
   }
@@ -82,6 +83,7 @@ plugins {
 
 Important:
 - launch the plugin by alias name: `LaunchOrFocusPlugin "zellij-history-selector"`
+- set `move_to_focused_tab true` so triggering the keybind from another tab brings the plugin to the current tab instead of jumping back to the old one
 - do not launch the raw `file:/.../plugin.wasm` path if you want the `plugins { ... }` config block to apply
 - build the `.wasm` yourself or download it, then place it at `~/.config/zellij/plugins/zellij-history-selector.wasm`
 

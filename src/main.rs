@@ -40,6 +40,7 @@ struct State {
     initialized: bool,
     help_visible: bool,
     self_pane: Option<PaneId>,
+    self_tab_position: Option<usize>,
     floating_height_adjusted: bool,
 }
 
@@ -94,6 +95,7 @@ impl ZellijPlugin for State {
             }
             Event::PaneUpdate(pane_manifest) => {
                 self.pane_manifest = Some(pane_manifest);
+                self.update_self_tab_position();
                 if self.target_pane.is_none() || self.target_pane.is_some_and(pane_id_is_plugin) {
                     self.target_pane = self
                         .pane_manifest
@@ -201,6 +203,24 @@ impl State {
         change_floating_panes_coordinates(vec![(self_pane, coordinates)]);
         self.self_pane = Some(self_pane);
         self.floating_height_adjusted = true;
+    }
+
+    fn update_self_tab_position(&mut self) {
+        let current_tab_position = self.detect_self_pane().and_then(|self_pane| {
+            self.pane_manifest
+                .as_ref()
+                .and_then(|pane_manifest| tab_position_for_pane_id(pane_manifest, self_pane))
+        });
+
+        let tab_changed = matches!(
+            (self.self_tab_position, current_tab_position),
+            (Some(previous), Some(current)) if previous != current
+        );
+        self.self_tab_position = current_tab_position;
+
+        if tab_changed {
+            self.handle_plugin_tab_changed();
+        }
     }
 
     fn detect_self_pane(&self) -> Option<PaneId> {
@@ -574,6 +594,19 @@ impl State {
         self.help_visible = false;
     }
 
+    fn handle_plugin_tab_changed(&mut self) {
+        self.target_pane = self
+            .pane_manifest
+            .as_ref()
+            .and_then(preferred_target_from_manifest);
+        self.floating_height_adjusted = false;
+        self.query.clear();
+        self.selected_match = 0;
+        self.status_message = None;
+        self.help_visible = true;
+        self.recompute_matches();
+    }
+
     fn describe_pane(&self, pane_id: PaneId) -> String {
         if let Some(title) = self
             .pane_manifest
@@ -787,6 +820,31 @@ mod tests {
         assert_eq!(
             tab_position_for_pane_id(&manifest, PaneId::Plugin(7)),
             Some(2)
+        );
+    }
+
+    #[test]
+    fn prefers_target_from_same_tab_even_if_other_tab_has_focused_terminal() {
+        let mut panes = HashMap::new();
+        panes.insert(
+            0,
+            vec![
+                terminal(10, false, "shell"),
+                plugin(11, true, "zellij-history-selector"),
+            ],
+        );
+        panes.insert(
+            1,
+            vec![
+                terminal(20, true, "focused elsewhere"),
+                terminal(21, false, "other"),
+            ],
+        );
+        let manifest = PaneManifest { panes };
+
+        assert_eq!(
+            preferred_target_from_manifest(&manifest),
+            Some(PaneId::Terminal(10))
         );
     }
 }
