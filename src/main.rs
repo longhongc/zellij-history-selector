@@ -18,6 +18,7 @@ use zellij_tile::prelude::*;
 
 const PREFERRED_FLOATING_HEIGHT: &str = "84%";
 const PLUGIN_ID_HINT: &str = "zellij-history-selector";
+const PLUGIN_PANE_TITLE: &str = "zellij-history-selector";
 
 #[derive(Default)]
 struct State {
@@ -178,6 +179,9 @@ impl State {
         let Some(self_pane) = self.detect_self_pane() else {
             return;
         };
+        if let PaneId::Plugin(plugin_pane_id) = self_pane {
+            rename_plugin_pane(plugin_pane_id, PLUGIN_PANE_TITLE);
+        }
         let Some(coordinates) = FloatingPaneCoordinates::new(
             None,
             None,

@@ -55,11 +55,12 @@ pub fn render_screen(
         .saturating_sub(header_rows + spacer_rows + preview_header_rows + preview_body_height);
 
     let mut lines = Vec::with_capacity(content_height);
+    let provider_line_prefix =
+        format!("Provider: {} [{}]  Target: ", provider_name, provider_state);
+    let target_width = width.saturating_sub(visible_width(&provider_line_prefix));
+    let target_display = truncate_from_start(target_label, target_width);
     lines.push(pad_right(
-        &format!(
-            "Provider: {} [{}]  Target: {}",
-            provider_name, provider_state, target_label
-        ),
+        &format!("{provider_line_prefix}{target_display}"),
         width,
     ));
     if content_height > 1 {
@@ -246,6 +247,37 @@ fn truncate_to_width(text: &str, width: usize) -> String {
     } else {
         rendered
     }
+}
+
+fn truncate_from_start(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if UnicodeWidthStr::width(text) <= width {
+        return text.to_owned();
+    }
+    if width < 3 {
+        return truncate_to_width(text, width);
+    }
+
+    let suffix_width = width.saturating_sub(3);
+    let mut reversed = Vec::new();
+    let mut current_width = 0usize;
+    for character in text.chars().rev() {
+        let char_width = character.width().unwrap_or(0);
+        if current_width + char_width > suffix_width {
+            break;
+        }
+        reversed.push(character);
+        current_width += char_width;
+    }
+    reversed.reverse();
+
+    let mut shortened = String::from("...");
+    for character in reversed {
+        shortened.push(character);
+    }
+    shortened
 }
 
 fn pad_right(text: &str, width: usize) -> String {
