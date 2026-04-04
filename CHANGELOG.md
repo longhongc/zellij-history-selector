@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1
+
+- recommend `move_to_focused_tab true` in the Zellij keybind example so reopening the plugin from another tab follows the current tab
+- retarget and reset plugin state when an existing floating instance is moved across tabs
+- reapply the custom floating height after the plugin is moved to another tab
+
 ## 1.4.0
 
 - rename the plugin pane to a fixed short title instead of inheriting a long path-derived name
