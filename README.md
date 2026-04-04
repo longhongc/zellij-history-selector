@@ -44,7 +44,7 @@ Place the built or downloaded plugin at:
 
 If you do not want to build it yourself, download the `.wasm` release asset from:
 
-<https://github.com/longhongc/zellij-history-selector/releases/tag/v1.2.2>
+<https://github.com/longhongc/zellij-history-selector/releases/tag/v1.3.0>
 
 ## Minimal Zellij Setup
 
