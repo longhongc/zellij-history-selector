@@ -85,16 +85,21 @@ impl ZellijPlugin for State {
             }
             Event::ListClients(clients) => {
                 if let Some(client) = clients.into_iter().find(|client| client.is_current_client) {
-                    self.target_pane = Some(client.pane_id);
+                    if !pane_id_is_plugin(client.pane_id) {
+                        self.target_pane = Some(client.pane_id);
+                    }
                     self.try_start_loading();
                 }
                 true
             }
             Event::PaneUpdate(pane_manifest) => {
-                if self.target_pane.is_none() {
-                    self.target_pane = preferred_target_from_manifest(&pane_manifest);
-                }
                 self.pane_manifest = Some(pane_manifest);
+                if self.target_pane.is_none() || self.target_pane.is_some_and(pane_id_is_plugin) {
+                    self.target_pane = self
+                        .pane_manifest
+                        .as_ref()
+                        .and_then(|pane_manifest| preferred_target_from_manifest(pane_manifest));
+                }
                 self.try_start_loading();
                 true
             }
@@ -651,24 +656,27 @@ fn pane_title_from_manifest(pane_manifest: &PaneManifest, pane_id: PaneId) -> Op
 }
 
 fn preferred_target_from_manifest(pane_manifest: &PaneManifest) -> Option<PaneId> {
-    pane_manifest
-        .panes
-        .values()
-        .flatten()
-        .find(|pane_info| pane_info.is_selectable && !pane_info.is_plugin && pane_info.is_focused)
+    let current_tab_position = preferred_plugin_from_manifest(pane_manifest)
+        .and_then(|self_pane| tab_position_for_pane_id(pane_manifest, self_pane));
+
+    current_tab_position
+        .and_then(|tab_position| preferred_target_from_tab(pane_manifest, tab_position))
         .or_else(|| {
             pane_manifest
                 .panes
                 .values()
                 .flatten()
-                .find(|pane_info| pane_info.is_selectable && !pane_info.is_plugin)
-        })
-        .map(|pane_info| {
-            if pane_info.is_plugin {
-                PaneId::Plugin(pane_info.id)
-            } else {
-                PaneId::Terminal(pane_info.id)
-            }
+                .find(|pane_info| {
+                    pane_info.is_selectable && !pane_info.is_plugin && pane_info.is_focused
+                })
+                .or_else(|| {
+                    pane_manifest
+                        .panes
+                        .values()
+                        .flatten()
+                        .find(|pane_info| pane_info.is_selectable && !pane_info.is_plugin)
+                })
+                .map(|pane_info| PaneId::Terminal(pane_info.id))
         })
 }
 
@@ -686,6 +694,101 @@ fn preferred_plugin_from_manifest(pane_manifest: &PaneManifest) -> Option<PaneId
                 .find(|pane_info| is_this_plugin_pane(pane_info))
         })
         .map(|pane_info| PaneId::Plugin(pane_info.id))
+}
+
+fn tab_position_for_pane_id(pane_manifest: &PaneManifest, pane_id: PaneId) -> Option<usize> {
+    pane_manifest
+        .panes
+        .iter()
+        .find_map(|(tab_position, panes)| {
+            panes
+                .iter()
+                .any(|pane_info| {
+                    pane_info.id == pane_id_number(pane_id)
+                        && pane_info.is_plugin == pane_id_is_plugin(pane_id)
+                })
+                .then_some(*tab_position)
+        })
+}
+
+fn preferred_target_from_tab(pane_manifest: &PaneManifest, tab_position: usize) -> Option<PaneId> {
+    pane_manifest
+        .panes
+        .get(&tab_position)
+        .into_iter()
+        .flatten()
+        .find(|pane_info| pane_info.is_selectable && !pane_info.is_plugin && pane_info.is_focused)
+        .or_else(|| {
+            pane_manifest
+                .panes
+                .get(&tab_position)
+                .into_iter()
+                .flatten()
+                .find(|pane_info| pane_info.is_selectable && !pane_info.is_plugin)
+        })
+        .map(|pane_info| PaneId::Terminal(pane_info.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PaneId, PaneInfo, PaneManifest, preferred_target_from_manifest, tab_position_for_pane_id,
+    };
+    use std::collections::HashMap;
+
+    fn terminal(id: u32, is_focused: bool, title: &str) -> PaneInfo {
+        PaneInfo {
+            id,
+            is_plugin: false,
+            is_focused,
+            is_selectable: true,
+            title: title.to_owned(),
+            ..PaneInfo::default()
+        }
+    }
+
+    fn plugin(id: u32, is_focused: bool, title: &str) -> PaneInfo {
+        PaneInfo {
+            id,
+            is_plugin: true,
+            is_focused,
+            is_selectable: true,
+            title: title.to_owned(),
+            plugin_url: Some("file:/tmp/zellij-history-selector.wasm".to_owned()),
+            ..PaneInfo::default()
+        }
+    }
+
+    #[test]
+    fn scopes_target_selection_to_plugin_tab() {
+        let mut panes = HashMap::new();
+        panes.insert(
+            0,
+            vec![
+                terminal(1, false, "shell"),
+                plugin(2, true, "zellij-history-selector"),
+            ],
+        );
+        panes.insert(1, vec![terminal(3, true, "other tab shell")]);
+        let manifest = PaneManifest { panes };
+
+        assert_eq!(
+            preferred_target_from_manifest(&manifest),
+            Some(PaneId::Terminal(1))
+        );
+    }
+
+    #[test]
+    fn finds_tab_position_for_plugin_pane() {
+        let mut panes = HashMap::new();
+        panes.insert(2, vec![plugin(7, true, "zellij-history-selector")]);
+        let manifest = PaneManifest { panes };
+
+        assert_eq!(
+            tab_position_for_pane_id(&manifest, PaneId::Plugin(7)),
+            Some(2)
+        );
+    }
 }
 
 fn is_this_plugin_pane(pane_info: &PaneInfo) -> bool {
