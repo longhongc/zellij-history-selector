@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- rename the plugin pane to a fixed short title instead of inheriting a long path-derived name
+- preserve the end of long target pane titles in the header so truncated labels keep the useful suffix
+- keep target pane selection scoped to the current tab so multi-tab sessions do not insert into another tab by mistake
+
 ## 1.3.0
 
 - expand `~` in `provider.<id>.command` so helper scripts can be referenced with home-relative paths
