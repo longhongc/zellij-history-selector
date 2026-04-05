@@ -4,6 +4,7 @@ use crate::model::{
     AppConfig, CommandConfig, CommandOutputMode, DefaultMode, FileLinesConfig, IPythonConfig,
     ProviderConfig, ProviderKind, SqliteQueryConfig,
 };
+use crate::provider::{provider_requires_full_hd, provider_requires_run_commands};
 
 pub fn parse_config(raw: BTreeMap<String, String>) -> Result<AppConfig, String> {
     let mut default_mode = match raw
@@ -22,20 +23,61 @@ pub fn parse_config(raw: BTreeMap<String, String>) -> Result<AppConfig, String> 
     let max_results = parse_usize(raw.get("max_results"), 500)?;
     let preview_lines = parse_usize(raw.get("preview_lines"), 10)?;
     let case_sensitive = parse_bool(raw.get("case_sensitive"), false)?;
-    let providers = parse_providers(&raw)?;
+    let selected_profile = raw
+        .get("profile")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let ProviderSelection {
+        active_providers: providers,
+        all_declared_providers,
+        active_profile,
+    } = parse_providers(&raw, selected_profile.as_deref())?;
+    let requires_run_commands = all_declared_providers
+        .iter()
+        .any(provider_requires_run_commands);
+    let requires_full_hd_access = all_declared_providers.iter().any(provider_requires_full_hd);
 
     Ok(AppConfig {
+        active_profile,
         default_mode,
         max_results,
         preview_lines,
         case_sensitive,
+        requires_run_commands,
+        requires_full_hd_access,
         providers,
     })
 }
 
-fn parse_providers(raw: &BTreeMap<String, String>) -> Result<Vec<ProviderConfig>, String> {
+struct ProviderSelection {
+    active_providers: Vec<ProviderConfig>,
+    all_declared_providers: Vec<ProviderConfig>,
+    active_profile: Option<String>,
+}
+
+fn parse_providers(
+    raw: &BTreeMap<String, String>,
+    selected_profile: Option<&str>,
+) -> Result<ProviderSelection, String> {
+    let has_profile_config = raw.contains_key("profiles")
+        || selected_profile.is_some()
+        || !collect_profile_ids(raw).is_empty();
+    if has_profile_config {
+        return parse_profiled_providers(raw, selected_profile).map(
+            |(active_providers, all_declared_providers, active_profile)| ProviderSelection {
+                active_providers,
+                all_declared_providers,
+                active_profile: Some(active_profile),
+            },
+        );
+    }
     if raw.contains_key("providers") {
-        return parse_namespaced_providers(raw);
+        return parse_namespaced_providers(raw).map(|providers| ProviderSelection {
+            all_declared_providers: providers.clone(),
+            active_providers: providers,
+            active_profile: None,
+        });
     }
     if !collect_namespaced_provider_ids(raw).is_empty() {
         return Err(
@@ -43,12 +85,27 @@ fn parse_providers(raw: &BTreeMap<String, String>) -> Result<Vec<ProviderConfig>
                 .to_owned(),
         );
     }
-    parse_indexed_providers(raw)
+    parse_indexed_providers(raw).map(|providers| ProviderSelection {
+        all_declared_providers: providers.clone(),
+        active_providers: providers,
+        active_profile: None,
+    })
 }
 
 fn parse_namespaced_providers(
     raw: &BTreeMap<String, String>,
 ) -> Result<Vec<ProviderConfig>, String> {
+    parse_namespaced_provider_defs(raw).map(|providers| {
+        providers
+            .into_iter()
+            .map(|(_provider_id, provider)| provider)
+            .collect()
+    })
+}
+
+fn parse_namespaced_provider_defs(
+    raw: &BTreeMap<String, String>,
+) -> Result<Vec<(String, ProviderConfig)>, String> {
     let provider_ids = parse_provider_ids(
         raw.get("providers")
             .ok_or_else(|| "Missing `providers` config key.".to_owned())?,
@@ -69,12 +126,13 @@ fn parse_namespaced_providers(
     let mut providers = Vec::with_capacity(provider_ids.len());
     for provider_id in provider_ids {
         let prefix = format!("provider.{provider_id}.");
-        providers.push(parse_provider_from_prefix(
+        let provider = parse_provider_from_prefix(
             raw,
             &prefix,
             provider_id.clone(),
             &format!("provider.{provider_id}"),
-        )?);
+        )?;
+        providers.push((provider_id, provider));
     }
     Ok(providers)
 }
@@ -124,7 +182,25 @@ fn collect_namespaced_provider_ids(raw: &BTreeMap<String, String>) -> BTreeSet<S
         .collect()
 }
 
+fn collect_profile_ids(raw: &BTreeMap<String, String>) -> BTreeSet<String> {
+    raw.keys()
+        .filter_map(|key| {
+            let rest = key.strip_prefix("profile.")?;
+            let (profile_id, _field) = rest.split_once('.')?;
+            (!profile_id.is_empty()).then(|| profile_id.to_owned())
+        })
+        .collect()
+}
+
 fn parse_provider_ids(raw: &str) -> Result<Vec<String>, String> {
+    parse_id_list(raw, "providers", "provider")
+}
+
+fn parse_profile_ids(raw: &str) -> Result<Vec<String>, String> {
+    parse_id_list(raw, "profiles", "profile")
+}
+
+fn parse_id_list(raw: &str, collection_name: &str, item_kind: &str) -> Result<Vec<String>, String> {
     let mut provider_ids = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -133,30 +209,112 @@ fn parse_provider_ids(raw: &str) -> Result<Vec<String>, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        if !is_valid_provider_id(provider_id) {
+        if !is_valid_id(provider_id) {
             return Err(format!(
-                "Invalid provider id `{provider_id}` in `providers`. Use only letters, numbers, `_`, and `-`."
+                "Invalid {item_kind} id `{provider_id}` in `{collection_name}`. Use only letters, numbers, `_`, and `-`."
             ));
         }
         if !seen.insert(provider_id.to_owned()) {
             return Err(format!(
-                "Duplicate provider id `{provider_id}` in `providers`."
+                "Duplicate {item_kind} id `{provider_id}` in `{collection_name}`."
             ));
         }
         provider_ids.push(provider_id.to_owned());
     }
 
     if provider_ids.is_empty() {
-        return Err("`providers` must list at least one provider id.".to_owned());
+        return Err(format!(
+            "`{collection_name}` must list at least one {item_kind} id."
+        ));
     }
 
     Ok(provider_ids)
 }
 
-fn is_valid_provider_id(provider_id: &str) -> bool {
+fn is_valid_id(provider_id: &str) -> bool {
     provider_id
         .chars()
         .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+}
+
+fn parse_profiled_providers(
+    raw: &BTreeMap<String, String>,
+    selected_profile: Option<&str>,
+) -> Result<(Vec<ProviderConfig>, Vec<ProviderConfig>, String), String> {
+    if !raw.contains_key("providers") {
+        return Err(
+            "Profiles require namespaced providers. Add `providers \"id1,id2\"` with `provider.<id>.*` keys."
+                .to_owned(),
+        );
+    }
+
+    let provider_defs = parse_namespaced_provider_defs(raw)?;
+    let provider_ids = provider_defs
+        .iter()
+        .map(|(provider_id, _provider)| provider_id.clone())
+        .collect::<BTreeSet<_>>();
+    let profile_names = parse_profile_ids(
+        raw.get("profiles")
+            .ok_or_else(|| "Missing `profiles` config key.".to_owned())?,
+    )?;
+    let listed_profile_names = profile_names.iter().cloned().collect::<BTreeSet<_>>();
+    let declared_profile_names = collect_profile_ids(raw);
+    let unlisted_profile_names = declared_profile_names
+        .difference(&listed_profile_names)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unlisted_profile_names.is_empty() {
+        return Err(format!(
+            "Found profile.* keys for ids not listed in `profiles`: {}",
+            unlisted_profile_names.join(", ")
+        ));
+    }
+
+    let mut profiles = BTreeMap::new();
+    for profile_name in &profile_names {
+        let key = format!("profile.{profile_name}.providers");
+        let profile_provider_ids = parse_id_list(
+            raw.get(&key)
+                .ok_or_else(|| format!("Missing required config key: {key}"))?,
+            &key,
+            "provider",
+        )?;
+        let unknown_provider_ids = profile_provider_ids
+            .iter()
+            .filter(|provider_id| !provider_ids.contains(*provider_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unknown_provider_ids.is_empty() {
+            return Err(format!(
+                "Profile `{profile_name}` references undeclared providers: {}",
+                unknown_provider_ids.join(", ")
+            ));
+        }
+        profiles.insert(profile_name.clone(), profile_provider_ids);
+    }
+
+    let active_profile = selected_profile
+        .map(str::to_owned)
+        .unwrap_or_else(|| profile_names[0].clone());
+    if !listed_profile_names.contains(&active_profile) {
+        return Err(format!(
+            "Selected profile `{active_profile}` is not listed in `profiles`."
+        ));
+    }
+
+    let provider_map = provider_defs.into_iter().collect::<BTreeMap<_, _>>();
+    let all_declared_providers = provider_map.values().cloned().collect::<Vec<_>>();
+    let providers = profiles[&active_profile]
+        .iter()
+        .map(|provider_id| provider_map.get(provider_id).cloned())
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            format!(
+                "Internal error: selected profile `{active_profile}` could not be fully resolved"
+            )
+        })?;
+
+    Ok((providers, all_declared_providers, active_profile))
 }
 
 fn parse_provider_from_prefix(
@@ -309,6 +467,7 @@ mod tests {
         assert_eq!(parsed.providers.len(), 2);
         assert_eq!(parsed.providers[0].name, "custom");
         assert_eq!(parsed.providers[1].name, "Bash");
+        assert!(parsed.active_profile.is_none());
         match &parsed.providers[0].kind {
             ProviderKind::Command(config) => {
                 assert_eq!(config.args, vec!["-m", "exporter"]);
@@ -442,5 +601,128 @@ mod tests {
 
         let parsed = parse_config(raw).expect("config should parse");
         assert!(matches!(parsed.default_mode, DefaultMode::Execute));
+    }
+
+    #[test]
+    fn resolves_provider_subset_from_selected_profile() {
+        let raw = BTreeMap::from([
+            ("profile".to_owned(), "task".to_owned()),
+            ("profiles".to_owned(), "default,task".to_owned()),
+            (
+                "providers".to_owned(),
+                "shell,ipython,task_snippets".to_owned(),
+            ),
+            ("provider.shell.type".to_owned(), "file_lines".to_owned()),
+            (
+                "provider.shell.path".to_owned(),
+                "~/.bash_history".to_owned(),
+            ),
+            ("provider.ipython.type".to_owned(), "ipython".to_owned()),
+            (
+                "provider.ipython.path".to_owned(),
+                "~/.ipython/profile_default/history.sqlite".to_owned(),
+            ),
+            (
+                "provider.task_snippets.type".to_owned(),
+                "command_json".to_owned(),
+            ),
+            (
+                "provider.task_snippets.command".to_owned(),
+                "python3".to_owned(),
+            ),
+            (
+                "profile.default.providers".to_owned(),
+                "shell,ipython".to_owned(),
+            ),
+            (
+                "profile.task.providers".to_owned(),
+                "shell,task_snippets".to_owned(),
+            ),
+        ]);
+
+        let parsed = parse_config(raw).expect("config should parse");
+        assert_eq!(parsed.active_profile.as_deref(), Some("task"));
+        assert_eq!(parsed.providers.len(), 2);
+        assert_eq!(parsed.providers[0].name, "shell");
+        assert_eq!(parsed.providers[1].name, "task_snippets");
+        assert!(parsed.requires_full_hd_access);
+        assert!(parsed.requires_run_commands);
+    }
+
+    #[test]
+    fn defaults_to_first_profile_when_selected_profile_is_missing() {
+        let raw = BTreeMap::from([
+            ("profiles".to_owned(), "default,task".to_owned()),
+            ("providers".to_owned(), "shell,copyq".to_owned()),
+            ("provider.shell.type".to_owned(), "file_lines".to_owned()),
+            (
+                "provider.shell.path".to_owned(),
+                "~/.bash_history".to_owned(),
+            ),
+            ("provider.copyq.type".to_owned(), "command_json".to_owned()),
+            ("provider.copyq.command".to_owned(), "python3".to_owned()),
+            ("profile.default.providers".to_owned(), "shell".to_owned()),
+            ("profile.task.providers".to_owned(), "copyq".to_owned()),
+        ]);
+
+        let parsed = parse_config(raw).expect("config should parse");
+        assert_eq!(parsed.active_profile.as_deref(), Some("default"));
+        assert_eq!(parsed.providers.len(), 1);
+        assert_eq!(parsed.providers[0].name, "shell");
+        assert!(parsed.requires_full_hd_access);
+        assert!(parsed.requires_run_commands);
+    }
+
+    #[test]
+    fn errors_when_selected_profile_is_not_declared() {
+        let raw = BTreeMap::from([
+            ("profile".to_owned(), "task".to_owned()),
+            ("profiles".to_owned(), "default".to_owned()),
+            ("providers".to_owned(), "shell".to_owned()),
+            ("provider.shell.type".to_owned(), "file_lines".to_owned()),
+            (
+                "provider.shell.path".to_owned(),
+                "~/.bash_history".to_owned(),
+            ),
+            ("profile.default.providers".to_owned(), "shell".to_owned()),
+        ]);
+
+        let error = parse_config(raw).expect_err("config should fail");
+        assert!(error.contains("Selected profile `task`"));
+    }
+
+    #[test]
+    fn errors_when_profile_references_undeclared_provider() {
+        let raw = BTreeMap::from([
+            ("profiles".to_owned(), "default".to_owned()),
+            ("providers".to_owned(), "shell".to_owned()),
+            ("provider.shell.type".to_owned(), "file_lines".to_owned()),
+            (
+                "provider.shell.path".to_owned(),
+                "~/.bash_history".to_owned(),
+            ),
+            (
+                "profile.default.providers".to_owned(),
+                "shell,missing".to_owned(),
+            ),
+        ]);
+
+        let error = parse_config(raw).expect_err("config should fail");
+        assert!(error.contains("undeclared providers"));
+        assert!(error.contains("missing"));
+    }
+
+    #[test]
+    fn errors_when_profiles_are_used_without_namespaced_providers() {
+        let raw = BTreeMap::from([
+            ("profile".to_owned(), "default".to_owned()),
+            ("profiles".to_owned(), "default".to_owned()),
+            ("profile.default.providers".to_owned(), "shell".to_owned()),
+            ("provider_1_type".to_owned(), "file_lines".to_owned()),
+            ("provider_1_path".to_owned(), "~/.bash_history".to_owned()),
+        ]);
+
+        let error = parse_config(raw).expect_err("config should fail");
+        assert!(error.contains("Profiles require namespaced providers"));
     }
 }

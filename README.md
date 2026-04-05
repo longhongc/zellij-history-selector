@@ -104,6 +104,9 @@ These top-level options control picker behavior:
   - `execute`: insert the selected text and execute it
   - `copy`: copy the selected text to the clipboard without inserting it
   Current default: `insert`
+- `profile`
+  Selects which named provider profile this plugin alias should use.
+  When omitted, the plugin uses the full `providers` list unless `profiles` is configured, in which case it defaults to the first listed profile.
 - `max_results`
   Maximum number of filtered matches shown in the picker.
   Current default: `500`
@@ -140,6 +143,85 @@ provider.copyq.dedupe "true"
 ```
 
 The order in `providers` is the order used in the UI when switching between sources.
+
+## Profiles
+
+Profiles let one plugin config expose different provider subsets for different workflows.
+
+Define providers once:
+
+```kdl
+providers "shell,ipython,copyq,task_snippets"
+
+provider.shell.type "file_lines"
+provider.shell.path "~/.bash_history"
+
+provider.ipython.type "ipython"
+provider.ipython.path "~/.ipython/profile_default/history.sqlite"
+
+provider.copyq.type "command_json"
+provider.copyq.command "~/.config/zellij/plugins/zellij-history-selector/scripts/export_copyq_json.py"
+provider.copyq.args "clipboard"
+
+provider.task_snippets.type "command_json"
+provider.task_snippets.command "~/.config/zellij/snippets/export_task_snippets.py"
+
+profiles "default,task"
+
+profile.default.providers "shell,ipython,copyq"
+profile.task.providers "shell,ipython,task_snippets"
+```
+
+Then choose the active profile at launch time. Keep one base plugin alias and override only `profile` from the keybind:
+
+```kdl
+plugins {
+  zhs location="file:~/.config/zellij/plugins/zellij-history-selector.wasm" {
+    profile "default"
+
+    providers "shell,ipython,copyq,task_snippets"
+    profiles "default,task"
+
+    provider.shell.type "file_lines"
+    provider.shell.path "~/.bash_history"
+
+    provider.ipython.type "ipython"
+    provider.ipython.path "~/.ipython/profile_default/history.sqlite"
+
+    provider.copyq.type "command_json"
+    provider.copyq.command "~/.config/zellij/plugins/zellij-history-selector/scripts/export_copyq_json.py"
+    provider.copyq.args "clipboard"
+
+    provider.task_snippets.type "command_json"
+    provider.task_snippets.command "~/.config/zellij/snippets/export_task_snippets.py"
+
+    profile.default.providers "shell,ipython,copyq"
+    profile.task.providers "shell,ipython,task_snippets"
+  }
+}
+```
+
+Bind different keys to different profile selections:
+
+```kdl
+keybinds {
+  shared_except "locked" {
+    bind "Alt r" {
+      LaunchOrFocusPlugin "zhs" {
+        floating true
+        move_to_focused_tab true
+      }
+    }
+    bind "Alt t" {
+      LaunchOrFocusPlugin "zhs" {
+        floating true
+        move_to_focused_tab true
+        profile "task"
+      }
+    }
+  }
+}
+```
 
 ## Provider Types
 

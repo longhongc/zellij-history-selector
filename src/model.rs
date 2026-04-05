@@ -9,10 +9,14 @@ pub enum DefaultMode {
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
+    #[allow(dead_code)]
+    pub active_profile: Option<String>,
     pub default_mode: DefaultMode,
     pub max_results: usize,
     pub preview_lines: usize,
     pub case_sensitive: bool,
+    pub requires_run_commands: bool,
+    pub requires_full_hd_access: bool,
     pub providers: Vec<ProviderConfig>,
 }
 

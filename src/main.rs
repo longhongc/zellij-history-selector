@@ -12,7 +12,6 @@ use fuzzy::filter_entries;
 use model::{AppConfig, DefaultMode, MatchResult, ProviderLoadState, ProviderState};
 use provider::{
     CommandInvocation, build_command_invocation, load_file_provider, parse_command_output,
-    provider_requires_full_hd, provider_requires_run_commands,
 };
 use zellij_tile::prelude::*;
 
@@ -61,7 +60,7 @@ impl ZellijPlugin for State {
 
         match parse_config(configuration) {
             Ok(app_config) => {
-                self.needs_host_root = app_config.providers.iter().any(provider_requires_full_hd);
+                self.needs_host_root = app_config.requires_full_hd_access;
                 self.providers = app_config
                     .providers
                     .iter()
@@ -252,14 +251,10 @@ impl State {
         if matches!(app_config.default_mode, DefaultMode::Copy) {
             permissions.insert(PermissionType::WriteToClipboard);
         }
-        if app_config
-            .providers
-            .iter()
-            .any(provider_requires_run_commands)
-        {
+        if app_config.requires_run_commands {
             permissions.insert(PermissionType::RunCommands);
         }
-        if self.needs_host_root {
+        if app_config.requires_full_hd_access {
             permissions.insert(PermissionType::FullHdAccess);
         }
         request_permission(&permissions.into_iter().collect::<Vec<_>>());
