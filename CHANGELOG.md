@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0
+
+- add phase-1 provider profiles with `profiles`, `profile.<name>.providers`, and top-level `profile`
+- document the cleaner base-alias plus launch-time `profile` override pattern for Zellij keybinds
+- request permissions from the full declared provider set so switching profiles does not trigger a second prompt
+- show the active profile in the floating pane title
+- simplify the in-pane header to a provider flow line that keeps the current provider first and the remaining providers in actual Tab order
+
 ## 1.4.1
 
 - recommend `move_to_focused_tab true` in the Zellij keybind example so reopening the plugin from another tab follows the current tab
