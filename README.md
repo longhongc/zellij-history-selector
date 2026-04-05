@@ -10,7 +10,7 @@ It is built for practical workflows:
 - custom scripts that export lines or JSON
 
 <p align="center">
-  <img src="assets/demo_v1.5.0.gif" alt="zellij-history-selector demo" />
+  <img src="assets/demo_v1.5.0.trimmed.gif" alt="zellij-history-selector demo" />
 </p>
 
 ## What It Does
