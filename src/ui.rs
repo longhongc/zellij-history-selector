@@ -25,19 +25,12 @@ pub fn render_screen(
     preview_lines: usize,
     status: Option<&str>,
     show_footer: bool,
-    target_label: &str,
 ) -> String {
     let width = cols.max(1);
     let height = rows.max(1);
     let footer_rows = usize::from(show_footer);
     let content_height = height.saturating_sub(footer_rows);
     let provider = providers.get(current_provider);
-    let provider_name = provider
-        .map(|provider| provider.config.name.as_str())
-        .unwrap_or("none");
-    let provider_state = provider
-        .map(|provider| format_provider_state(&provider.load_state))
-        .unwrap_or_else(|| "missing".to_owned());
 
     let header_rows = content_height.min(3);
     let spacer_rows = usize::from(content_height > header_rows);
@@ -55,14 +48,9 @@ pub fn render_screen(
         .saturating_sub(header_rows + spacer_rows + preview_header_rows + preview_body_height);
 
     let mut lines = Vec::with_capacity(content_height);
-    let provider_line_prefix =
-        format!("Provider: {} [{}]  Target: ", provider_name, provider_state);
-    let target_width = width.saturating_sub(visible_width(&provider_line_prefix));
-    let target_display = truncate_from_start(target_label, target_width);
-    lines.push(pad_right(
-        &format!("{provider_line_prefix}{target_display}"),
-        width,
-    ));
+    let (header_line, header_visible_width) =
+        provider_flow_line(providers, current_provider, width);
+    lines.push(pad_right_ansi(&header_line, header_visible_width, width));
     if content_height > 1 {
         lines.push(pad_right(&format!("> {}", query), width));
     }
@@ -202,15 +190,6 @@ fn render_preview_lines(
     lines
 }
 
-fn format_provider_state(load_state: &ProviderLoadState) -> String {
-    match load_state {
-        ProviderLoadState::Unloaded => "idle".to_owned(),
-        ProviderLoadState::Loading => "loading".to_owned(),
-        ProviderLoadState::Ready(entries) => format!("{} entries", entries.len()),
-        ProviderLoadState::Error(_) => "error".to_owned(),
-    }
-}
-
 fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or(text)
 }
@@ -247,37 +226,6 @@ fn truncate_to_width(text: &str, width: usize) -> String {
     } else {
         rendered
     }
-}
-
-fn truncate_from_start(text: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if UnicodeWidthStr::width(text) <= width {
-        return text.to_owned();
-    }
-    if width < 3 {
-        return truncate_to_width(text, width);
-    }
-
-    let suffix_width = width.saturating_sub(3);
-    let mut reversed = Vec::new();
-    let mut current_width = 0usize;
-    for character in text.chars().rev() {
-        let char_width = character.width().unwrap_or(0);
-        if current_width + char_width > suffix_width {
-            break;
-        }
-        reversed.push(character);
-        current_width += char_width;
-    }
-    reversed.reverse();
-
-    let mut shortened = String::from("...");
-    for character in reversed {
-        shortened.push(character);
-    }
-    shortened
 }
 
 fn pad_right(text: &str, width: usize) -> String {
@@ -452,6 +400,100 @@ fn footer_hint_line(status: Option<&str>) -> (String, usize) {
     }
 
     (rendered, total_visible_width)
+}
+
+fn provider_flow_line(
+    providers: &[ProviderState],
+    current_provider: usize,
+    width: usize,
+) -> (String, usize) {
+    let mut rendered = String::new();
+    let mut visible = 0usize;
+
+    let prefix = "Provider: ";
+    rendered.push_str(&prefix);
+    visible += visible_width(&prefix);
+
+    if providers.is_empty() {
+        let empty = "none";
+        let clipped = truncate_to_width(empty, width.saturating_sub(visible));
+        rendered.push_str(ANSI_DIM);
+        rendered.push_str(&clipped);
+        rendered.push_str(ANSI_RESET);
+        visible += visible_width(&clipped);
+        return (rendered, visible.min(width));
+    }
+
+    let current_name = providers
+        .get(current_provider)
+        .map(|provider| provider.config.name.as_str())
+        .unwrap_or("none");
+    let current_clipped = truncate_to_width(current_name, width.saturating_sub(visible));
+    rendered.push_str(ANSI_BLUE);
+    rendered.push_str(ANSI_BOLD);
+    rendered.push_str(&current_clipped);
+    rendered.push_str(ANSI_RESET);
+    visible += visible_width(&current_clipped);
+    if visible < width && visible_width(&current_clipped) < visible_width(current_name) {
+        return (rendered, visible.min(width));
+    }
+
+    if providers.len() <= 1 {
+        return (rendered, visible.min(width));
+    }
+
+    let arrow = " -> ";
+    let arrow_width = visible_width(arrow);
+    if visible + arrow_width > width {
+        return (rendered, visible.min(width));
+    }
+    rendered.push_str(ANSI_DIM);
+    rendered.push_str(arrow);
+    rendered.push_str(ANSI_RESET);
+    visible += arrow_width;
+
+    let mut appended_any = false;
+    for offset in 1..providers.len() {
+        let index = (current_provider + offset) % providers.len();
+        let name = providers[index].config.name.as_str();
+        let separator = if appended_any { ", " } else { "" };
+        let remaining_width = width.saturating_sub(visible + visible_width(separator));
+        if remaining_width == 0 {
+            break;
+        }
+
+        let clipped = truncate_to_width(name, remaining_width);
+        let clipped_width = visible_width(&clipped);
+        if clipped_width == 0 {
+            break;
+        }
+
+        rendered.push_str(ANSI_DIM);
+        rendered.push_str(separator);
+        rendered.push_str(&clipped);
+        rendered.push_str(ANSI_RESET);
+        visible += visible_width(separator) + clipped_width;
+        appended_any = true;
+
+        if clipped_width < visible_width(name) {
+            break;
+        }
+
+        let needs_more = offset + 1 < providers.len();
+        if needs_more && visible + visible_width(", ...") <= width {
+            let next_index = (current_provider + offset + 1) % providers.len();
+            let next_name = providers[next_index].config.name.as_str();
+            if visible + visible_width(", ") + visible_width(next_name) > width {
+                rendered.push_str(ANSI_DIM);
+                rendered.push_str(", ...");
+                rendered.push_str(ANSI_RESET);
+                visible += visible_width(", ...");
+                break;
+            }
+        }
+    }
+
+    (rendered, visible.min(width))
 }
 
 struct FooterSegment {

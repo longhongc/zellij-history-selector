@@ -17,7 +17,7 @@ use zellij_tile::prelude::*;
 
 const PREFERRED_FLOATING_HEIGHT: &str = "84%";
 const PLUGIN_ID_HINT: &str = "zellij-history-selector";
-const PLUGIN_PANE_TITLE: &str = "zellij-history-selector";
+const PLUGIN_PANE_TITLE: &str = "history-selector";
 
 #[derive(Default)]
 struct State {
@@ -143,11 +143,6 @@ impl ZellijPlugin for State {
             return;
         }
 
-        let target_label = self
-            .target_pane
-            .as_ref()
-            .map(|pane_id| self.describe_pane(*pane_id))
-            .unwrap_or_else(|| "capturing...".to_owned());
         let status = if !self.permission_granted {
             Some("Approve the Zellij permission prompt for this plugin.")
         } else {
@@ -170,7 +165,6 @@ impl ZellijPlugin for State {
             preview_lines,
             status,
             show_footer,
-            &target_label,
         );
         print!("{}", screen);
     }
@@ -186,7 +180,7 @@ impl State {
             return;
         };
         if let PaneId::Plugin(plugin_pane_id) = self_pane {
-            rename_plugin_pane(plugin_pane_id, PLUGIN_PANE_TITLE);
+            rename_plugin_pane(plugin_pane_id, &self.plugin_pane_title());
         }
         let Some(coordinates) = FloatingPaneCoordinates::new(
             None,
@@ -602,19 +596,14 @@ impl State {
         self.recompute_matches();
     }
 
-    fn describe_pane(&self, pane_id: PaneId) -> String {
-        if let Some(title) = self
-            .pane_manifest
+    fn plugin_pane_title(&self) -> String {
+        match self
+            .app_config
             .as_ref()
-            .and_then(|pane_manifest| pane_title_from_manifest(pane_manifest, pane_id))
-            .filter(|title| !title.trim().is_empty())
+            .and_then(|config| config.active_profile.as_deref())
         {
-            return title;
-        }
-
-        match pane_id {
-            PaneId::Terminal(id) => format!("terminal #{id}"),
-            PaneId::Plugin(id) => format!("plugin #{id}"),
+            Some(profile) => format!("{PLUGIN_PANE_TITLE}: {profile}"),
+            None => PLUGIN_PANE_TITLE.to_owned(),
         }
     }
 }
@@ -669,18 +658,6 @@ fn pane_id_number(pane_id: PaneId) -> u32 {
 
 fn pane_id_is_plugin(pane_id: PaneId) -> bool {
     matches!(pane_id, PaneId::Plugin(_))
-}
-
-fn pane_title_from_manifest(pane_manifest: &PaneManifest, pane_id: PaneId) -> Option<String> {
-    pane_manifest
-        .panes
-        .values()
-        .flatten()
-        .find(|pane_info| {
-            pane_info.id == pane_id_number(pane_id)
-                && pane_info.is_plugin == pane_id_is_plugin(pane_id)
-        })
-        .map(|pane_info| pane_info.title.clone())
 }
 
 fn preferred_target_from_manifest(pane_manifest: &PaneManifest) -> Option<PaneId> {
