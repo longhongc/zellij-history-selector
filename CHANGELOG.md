@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1
+
+- use bracketed paste for multiline insertions so editors like Vim preserve indentation instead of treating pasted blocks as line-by-line typed input
+
 ## 1.5.0
 
 - add phase-1 provider profiles with `profiles`, `profile.<name>.providers`, and top-level `profile`
