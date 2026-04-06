@@ -561,11 +561,11 @@ impl State {
             return;
         }
 
-        let mut text = entry.text.clone();
-        if matches!(app_config.default_mode, DefaultMode::Execute) {
-            text.push('\n');
-        }
-        write_chars_to_pane_id(&text, target_pane);
+        write_entry_to_target_pane(
+            &entry.text,
+            matches!(app_config.default_mode, DefaultMode::Execute),
+            target_pane,
+        );
         close_self();
     }
 
@@ -647,6 +647,25 @@ fn load_current_provider(
 
 fn is_ctrl_char(key: &KeyWithModifier, character: char) -> bool {
     key.bare_key == BareKey::Char(character) && key.key_modifiers.contains(&KeyModifier::Ctrl)
+}
+
+fn write_entry_to_target_pane(text: &str, execute: bool, target_pane: PaneId) {
+    if text.contains('\n') {
+        let mut payload = Vec::with_capacity(text.len() + 16);
+        payload.extend_from_slice(b"\x1b[200~");
+        payload.extend_from_slice(text.as_bytes());
+        payload.extend_from_slice(b"\x1b[201~");
+        write_to_pane_id(payload, target_pane);
+        if execute {
+            write_chars_to_pane_id("\n", target_pane);
+        }
+    } else {
+        let mut text = text.to_owned();
+        if execute {
+            text.push('\n');
+        }
+        write_chars_to_pane_id(&text, target_pane);
+    }
 }
 
 fn pane_id_number(pane_id: PaneId) -> u32 {
