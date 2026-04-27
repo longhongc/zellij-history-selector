@@ -2,6 +2,7 @@
 name = "zellij-history-selector"
 version = "1.5.1"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
